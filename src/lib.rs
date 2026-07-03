@@ -73,6 +73,11 @@ fn period_range(period: &str, today: NaiveDate) -> Result<(NaiveDate, NaiveDate,
             )
         }
         "month" => month_range(today.year(), today.month()),
+        "year" => {
+            let jan1 = NaiveDate::from_ymd_opt(today.year(), 1, 1).expect("jan 1");
+            let next = NaiveDate::from_ymd_opt(today.year() + 1, 1, 1).expect("jan 1");
+            (jan1, next, format!("{}", today.year()))
+        }
         name if months.contains(&name) => {
             let month = months.iter().position(|m| *m == name).expect("matched") as u32 + 1;
             month_range(today.year(), month)
@@ -98,7 +103,7 @@ fn period_range(period: &str, today: NaiveDate) -> Result<(NaiveDate, NaiveDate,
 
 fn bad_period(period: &str) -> Error {
     Error::Endpoint(format!(
-        "urn:org:agenda:{period}: unknown period — try today, tomorrow, week, month, \
+        "urn:org:agenda:{period}: unknown period — try today, tomorrow, week, month, year, \
          a month name, YYYY-MM, or YYYY-MM-DD"
     ))
 }
@@ -416,6 +421,14 @@ impl Endpoint for AgendaEndpoint {
         }
         events.sort_by(|a, b| a.start.cmp(&b.start));
 
+        // q= — case-insensitive title search (org events carry no location).
+        let mut label = label;
+        if let Ok(q) = inv.inline_str("q") {
+            let needle = q.to_lowercase();
+            events.retain(|e| e.title.to_lowercase().contains(&needle));
+            label = format!("{label} · matching \"{q}\"");
+        }
+
         let want_turtle = inv
             .inline_str("as")
             .map(|s| s.contains("turtle"))
@@ -455,6 +468,11 @@ impl Endpoint for AgendaEndpoint {
             .input(
                 ArgSpec::new("as")
                     .summary("text/turtle for the skolemized event graph")
+                    .optional(),
+            )
+            .input(
+                ArgSpec::new("q")
+                    .summary("search: case-insensitive match over event titles")
                     .optional(),
             )
             .output("text/plain;charset=utf-8")
@@ -583,6 +601,15 @@ mod tests {
         assert!(ttl.contains("<urn:event:dentist-2026-07>"));
         assert!(ttl.contains("ik:calendar \"calendar.org\""));
         assert!(!ttl.contains("_:"), "skolemized — no blank nodes");
+    }
+
+    #[test]
+    fn year_period_spans_the_calendar_year() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 2).unwrap();
+        let (start, end, label) = period_range("year", today).unwrap();
+        assert_eq!(start, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+        assert_eq!(end, NaiveDate::from_ymd_opt(2027, 1, 1).unwrap());
+        assert_eq!(label, "2026");
     }
 
     #[test]
