@@ -1,0 +1,21 @@
+[package]
+name = "ikigai-org"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Org-mode agenda as ikigai ROC resources: urn:org:agenda:{period} reads date-fixed events (active timestamps, with repeater expansion) from org files and serves them as text or as the same skolemized Turtle event graph urn:personal:calendar speaks — so org and native calendars union and diff as graphs."
+authors = ["Brian Sletten <brian.sletten@gmail.com>"]
+repository = "https://github.com/ikigai-rs/ikigai-org"
+homepage = "https://github.com/ikigai-rs/ikigai-org"
+readme = "README.md"
+keywords = ["ikigai", "roc", "org-mode", "calendar", "agenda"]
+categories = ["date-and-time"]
+
+[dependencies]
+ikigai-core = "0.1.32"
+async-trait = "0.1"
+# Local-time period math + timestamp arithmetic (repeater expansion).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+futures = "0.3"

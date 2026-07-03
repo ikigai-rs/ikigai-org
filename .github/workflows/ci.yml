@@ -1,0 +1,27 @@
+# CI from day one (the new-module convention). Published crate, also compiled
+# into wasm hosts eventually — check both faces.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy (native, all targets)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: test
+        run: cargo test
+      - name: clippy (wasm lib)
+        run: cargo clippy --lib --target wasm32-unknown-unknown -- -D warnings
