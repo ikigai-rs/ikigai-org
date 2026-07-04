@@ -41,6 +41,34 @@ pub struct OrgEvent {
     pub end: String,
     /// Date-only timestamp.
     pub all_day: bool,
+    /// Alarms: minutes before start (`:ALERT: 1h 1d` / `:APPT_WARNTIME: 30`).
+    pub alerts: Vec<u32>,
+}
+
+/// Parse an `:ALERT:` value — space/comma-separated friendly durations
+/// (`30m`, `1h`, `1d`, or bare minutes), sorted and deduplicated.
+fn parse_alerts(value: &str) -> Vec<u32> {
+    let mut alerts: Vec<u32> = value
+        .split([' ', ','])
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| {
+            let (digits, factor) = match part.strip_suffix(['m', 'h', 'd']) {
+                Some(rest) => (
+                    rest,
+                    match part.chars().last() {
+                        Some('h') => 60,
+                        Some('d') => 1440,
+                        _ => 1,
+                    },
+                ),
+                None => (part, 1),
+            };
+            digits.parse::<u32>().ok().map(|n| n * factor)
+        })
+        .collect();
+    alerts.sort_unstable();
+    alerts.dedup();
+    alerts
 }
 
 // ---- period math (mirrors urn:personal:calendar's grammar) --------------------
@@ -256,6 +284,7 @@ pub fn agenda_events(
     let mut events = Vec::new();
     let mut headline: Option<String> = None;
     let mut org_id: Option<String> = None;
+    let mut alerts: Vec<u32> = Vec::new();
     for line in org.lines() {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed
@@ -267,6 +296,7 @@ pub fn agenda_events(
             if let Some(title) = rest.strip_prefix(' ') {
                 headline = Some(title.trim().to_string());
                 org_id = None;
+                alerts = Vec::new();
                 continue;
             }
         }
@@ -275,6 +305,17 @@ pub fn agenda_events(
         }
         if let Some(id) = trimmed.strip_prefix(":ID:") {
             org_id = Some(id.trim().to_string());
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix(":ALERT:") {
+            alerts = parse_alerts(value);
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix(":APPT_WARNTIME:") {
+            // org's own appointment-warning property: bare minutes.
+            if let Ok(minutes) = value.trim().parse::<u32>() {
+                alerts = vec![minutes];
+            }
             continue;
         }
         let Some(title) = &headline else { continue };
@@ -315,6 +356,7 @@ pub fn agenda_events(
                         start,
                         end,
                         all_day,
+                        alerts: alerts.clone(),
                     });
                 }
                 let Some(repeat) = stamp.repeat else { break };
@@ -369,6 +411,9 @@ fn format_turtle(events: &[OrgEvent]) -> String {
         ];
         if e.all_day {
             props.push("ik:allDay true".to_string());
+        }
+        for minutes in &e.alerts {
+            props.push(format!("ik:alert {minutes}"));
         }
         ttl.push_str(&format!(
             "\n<urn:event:{}> {} .\n",
@@ -523,6 +568,7 @@ mod tests {
 
 * Dentist — cleaning
   :ID: dentist-2026-07
+  :ALERT: 1h 1d
   <2026-07-22 Wed 10:30-11:15>
 ";
 
@@ -598,6 +644,25 @@ mod tests {
             !events.iter().any(|e| e.title == "Anniversary"),
             "Aug 15 is outside July"
         );
+    }
+
+    #[test]
+    fn alerts_parse_and_emit() {
+        assert_eq!(parse_alerts("1h 1d"), vec![60, 1440]);
+        assert_eq!(parse_alerts("30m,45"), vec![30, 45]);
+        assert_eq!(parse_alerts("junk 2h"), vec![120]);
+        let (start, end) = july();
+        let events = agenda_events(ORG, "calendar.org", start, end);
+        let dentist = events.iter().find(|e| e.title.contains("Dentist")).unwrap();
+        assert_eq!(dentist.alerts, vec![60, 1440]);
+        let dinner = events
+            .iter()
+            .find(|e| e.title.contains("Hendersons"))
+            .unwrap();
+        assert!(dinner.alerts.is_empty(), "no :ALERT: -> no alarms");
+        let ttl = format_turtle(&events);
+        assert!(ttl.contains("ik:alert 60"));
+        assert!(ttl.contains("ik:alert 1440"));
     }
 
     #[test]
