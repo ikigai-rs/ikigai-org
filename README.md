@@ -18,6 +18,11 @@ this space their IRIs — capability-gated, wasm-clean, golden-thread-ready.
 Event identity: an org `:ID:` property wins; otherwise a stable FNV-1a of
 `title|timestamp`, with repeater occurrences date-suffixed (`…-2026-07-03`).
 
+Todo states: an open `TODO` headline stays on the calendar, keyword and all
+(the reminder is deliberate); `DONE` keeps the event under its clean name —
+the calendar records that it happens, org records that it's complete;
+`CANCELLED` events leave the calendar on the next derive.
+
 Alarms: an `:ALERT:` line in a headline's section (`:ALERT: 1h 1d` — space or
 comma separated, `m`/`h`/`d` suffixes, bare numbers are minutes) or an org
 `:APPT_WARNTIME:` property becomes multi-valued `ik:alert` (minutes before

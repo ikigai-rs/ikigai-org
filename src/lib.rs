@@ -311,7 +311,22 @@ pub fn agenda_events(
             // a headline: any number of stars then a space
             let rest = rest.trim_start_matches('*');
             if let Some(title) = rest.strip_prefix(' ') {
-                headline = Some(title.trim().to_string());
+                let title = title.trim();
+                // Todo states: an open TODO stays on the calendar keyword and
+                // all (the reminder is wanted). DONE keeps the event under its
+                // clean name — the calendar records that it happens; org
+                // records that it's complete. CANCELLED isn't happening: no
+                // event, and the derive removes any existing one.
+                headline = if let Some(done) = title.strip_prefix("DONE ") {
+                    Some(done.trim().to_string())
+                } else if ["CANCELLED", "CANCELED", "DONE"]
+                    .iter()
+                    .any(|kw| title == *kw || title.starts_with(&format!("{kw} ")))
+                {
+                    None
+                } else {
+                    Some(title.to_string())
+                };
                 org_id = None;
                 alerts = Vec::new();
                 continue;
@@ -627,6 +642,15 @@ mod tests {
 
 * Overnight shift
   <2026-07-20 Mon 22:00>--<2026-07-21 Tue 06:00>
+
+* TODO Move the boxes
+  <2026-07-24 Fri>
+
+* DONE Return the library books
+  <2026-07-08 Wed>
+
+* CANCELLED Coffee with Dave
+  <2026-07-09 Thu 09:00>
 ";
 
     fn july() -> (NaiveDate, NaiveDate) {
@@ -634,6 +658,28 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
             NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
         )
+    }
+
+    #[test]
+    fn todo_states_map_to_calendar_semantics() {
+        let (start, end) = july();
+        let events = agenda_events(ORG, "calendar.org", start, end);
+        assert!(
+            events.iter().any(|e| e.title == "TODO Move the boxes"),
+            "an OPEN todo stays, keyword and all — the reminder is wanted"
+        );
+        assert!(
+            events.iter().any(|e| e.title == "Return the library books"),
+            "DONE keeps the event under its clean name"
+        );
+        assert!(
+            !events.iter().any(|e| e.title.contains("DONE")),
+            "…but the keyword itself never reaches the calendar"
+        );
+        assert!(
+            !events.iter().any(|e| e.title.contains("Dave")),
+            "CANCELLED events leave the calendar"
+        );
     }
 
     #[test]
