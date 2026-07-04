@@ -1,6 +1,6 @@
 [package]
 name = "ikigai-org"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Org-mode agenda as ikigai ROC resources: urn:org:agenda:{period} reads date-fixed events (active timestamps, with repeater expansion) from org files and serves them as text or as the same skolemized Turtle event graph urn:personal:calendar speaks — so org and native calendars union and diff as graphs."

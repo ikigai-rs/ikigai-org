@@ -83,7 +83,15 @@ fn period_range(period: &str, today: NaiveDate) -> Result<(NaiveDate, NaiveDate,
             month_range(today.year(), month)
         }
         other => {
-            if let Ok(date) = other.parse::<NaiveDate>() {
+            // A range: <start>..<end>, end-date INCLUSIVE (humans say "through").
+            if let Some((from, to)) = other.split_once("..") {
+                match (from.parse::<NaiveDate>(), to.parse::<NaiveDate>()) {
+                    (Ok(from), Ok(to)) if to >= from => {
+                        (from, to + Duration::days(1), format!("{from}..{to}"))
+                    }
+                    _ => return Err(bad_period(other)),
+                }
+            } else if let Ok(date) = other.parse::<NaiveDate>() {
                 day(date)
             } else if let Some((y, m)) = other
                 .split_once('-')
@@ -104,7 +112,7 @@ fn period_range(period: &str, today: NaiveDate) -> Result<(NaiveDate, NaiveDate,
 fn bad_period(period: &str) -> Error {
     Error::Endpoint(format!(
         "urn:org:agenda:{period}: unknown period — try today, tomorrow, week, month, year, \
-         a month name, YYYY-MM, or YYYY-MM-DD"
+         a month name, YYYY-MM, YYYY-MM-DD, or YYYY-MM-DD..YYYY-MM-DD"
     ))
 }
 
@@ -610,6 +618,15 @@ mod tests {
         assert_eq!(start, NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
         assert_eq!(end, NaiveDate::from_ymd_opt(2027, 1, 1).unwrap());
         assert_eq!(label, "2026");
+    }
+
+    #[test]
+    fn range_periods_are_end_inclusive() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 2).unwrap();
+        let (start, end, label) = period_range("2026-07-01..2026-12-31", today).unwrap();
+        assert_eq!(label, "2026-07-01..2026-12-31");
+        assert_eq!(end - start, chrono::Duration::days(184));
+        assert!(period_range("2026-12-31..2026-07-01", today).is_err());
     }
 
     #[test]
