@@ -15,7 +15,8 @@
 //! ## What is parsed (v1)
 //! Headlines (`* Title`) whose section carries an active timestamp:
 //! `<YYYY-MM-DD [Day] [HH:MM[-HH:MM]] [+N{d,w,m,y}]>`. Inactive `[…]`
-//! timestamps are ignored. Untimed stamps are all-day; a timed stamp without
+//! timestamps are ignored. A `<start>--<end>` pair is one spanning event.
+//! Untimed stamps are all-day; a timed stamp without
 //! an end defaults to one hour. Repeaters (`+1w`, `+1y`, …) are expanded into
 //! the requested window.
 
@@ -164,6 +165,9 @@ struct Stamp {
     time: Option<(NaiveTime, Option<NaiveTime>)>,
     /// Repeater as (count, unit) — `+2w` = (2, 'w').
     repeat: Option<(u32, char)>,
+    /// Range end from `<start>--<end>` (org's multi-day event syntax).
+    end_date: Option<NaiveDate>,
+    end_time: Option<NaiveTime>,
     raw: String,
 }
 
@@ -210,22 +214,35 @@ fn parse_stamp(inner: &str) -> Option<Stamp> {
         date,
         time,
         repeat,
+        end_date: None,
+        end_time: None,
         raw: inner.trim().to_string(),
     })
 }
 
-/// Every `<…>` active timestamp in a line (inactive `[…]` ignored).
+/// Every `<…>` active timestamp in a line (inactive `[…]` ignored). A
+/// `<start>--<end>` pair — org's multi-day event syntax — merges into ONE
+/// stamp carrying the range end, not two separate events.
 fn stamps_in(line: &str) -> Vec<Stamp> {
-    let mut found = Vec::new();
+    let mut found: Vec<Stamp> = Vec::new();
     let mut rest = line;
+    let mut pending_range = false; // the previous stamp was followed by `--`
     while let Some(open) = rest.find('<') {
         let Some(close) = rest[open..].find('>') else {
             break;
         };
         if let Some(stamp) = parse_stamp(&rest[open + 1..open + close]) {
-            found.push(stamp);
+            match (pending_range, found.last_mut()) {
+                (true, Some(prev)) if prev.end_date.is_none() => {
+                    prev.end_date = Some(stamp.date);
+                    prev.end_time = stamp.time.map(|(from, _)| from);
+                    prev.raw = format!("{}--{}", prev.raw, stamp.raw);
+                }
+                _ => found.push(stamp),
+            }
         }
         rest = &rest[open + close + 1..];
+        pending_range = rest.starts_with("--");
     }
     found
 }
@@ -323,19 +340,41 @@ pub fn agenda_events(
             let base_uid = org_id.clone().unwrap_or_else(|| {
                 format!("org-{:016x}", fnv1a(&format!("{title}|{}", stamp.raw)))
             });
-            // occurrences: the base date, then repeater steps into the window
+            // occurrences: the base date, then repeater steps into the window.
+            // A range keeps its duration across occurrences, and overlaps the
+            // window whenever its END does — a stay that started before the
+            // window still spans into it.
+            let span = stamp.end_date.map(|end| end - stamp.date);
             let mut date = stamp.date;
             let mut hops = 0u32;
             while date < win_end && hops < 1000 {
-                if date >= win_start {
-                    let (start, end, all_day) = match stamp.time {
-                        Some((from, to)) => {
+                let occ_end = span.map(|days| date + days);
+                if date >= win_start || occ_end.is_some_and(|end| end >= win_start) {
+                    let (start, end, all_day) = match (stamp.time, occ_end) {
+                        // Timed on both sides: one continuous block.
+                        (Some((from, _)), Some(end_date)) if stamp.end_time.is_some() => (
+                            rfc3339(date, from),
+                            rfc3339(end_date, stamp.end_time.expect("checked")),
+                            false,
+                        ),
+                        // A range missing a time on either side degrades to
+                        // all-day spanning (dtend exclusive, matching the
+                        // single-day all-day convention).
+                        (_, Some(end_date)) => {
+                            let midnight = NaiveTime::from_hms_opt(0, 0, 0).expect("midnight");
+                            (
+                                rfc3339(date, midnight),
+                                rfc3339(end_date + Duration::days(1), midnight),
+                                true,
+                            )
+                        }
+                        (Some((from, to)), None) => {
                             let until = to.unwrap_or_else(|| {
                                 (NaiveDateTime::new(date, from) + Duration::hours(1)).time()
                             });
                             (rfc3339(date, from), rfc3339(date, until), false)
                         }
-                        None => {
+                        (None, None) => {
                             let midnight = NaiveTime::from_hms_opt(0, 0, 0).expect("midnight");
                             (
                                 rfc3339(date, midnight),
@@ -379,7 +418,19 @@ fn format_detail(label: &str, events: &[OrgEvent]) -> String {
     for e in events {
         let date = e.start.split_once('T').map(|(d, _)| d).unwrap_or(&e.start);
         let when = if e.all_day {
-            format!("{date}  all-day    ")
+            // dtend is exclusive; a span longer than one day shows its
+            // inclusive range so a stay doesn't read as its first day.
+            let last = e
+                .end
+                .split_once('T')
+                .and_then(|(d, _)| d.parse::<NaiveDate>().ok())
+                .map(|d| d - Duration::days(1));
+            match last {
+                Some(last) if last.to_string() != *date => {
+                    format!("{date}..{last}  all-day")
+                }
+                _ => format!("{date}  all-day    "),
+            }
         } else {
             let hhmm = |s: &str| {
                 s.split_once('T')
@@ -570,6 +621,12 @@ mod tests {
   :ID: dentist-2026-07
   :ALERT: 1h 1d
   <2026-07-22 Wed 10:30-11:15>
+
+* Conference in Berlin
+  <2026-07-14 Tue>--<2026-07-17 Fri>
+
+* Overnight shift
+  <2026-07-20 Mon 22:00>--<2026-07-21 Tue 06:00>
 ";
 
     fn july() -> (NaiveDate, NaiveDate) {
@@ -577,6 +634,53 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
             NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
         )
+    }
+
+    #[test]
+    fn a_date_range_is_one_spanning_event() {
+        let (start, end) = july();
+        let events = agenda_events(ORG, "calendar.org", start, end);
+        let conf: Vec<_> = events
+            .iter()
+            .filter(|e| e.title.contains("Berlin"))
+            .collect();
+        assert_eq!(conf.len(), 1, "one event, not one per stamp");
+        assert!(conf[0].all_day);
+        assert!(conf[0].start.starts_with("2026-07-14T00:00"));
+        assert!(
+            conf[0].end.starts_with("2026-07-18T00:00"),
+            "dtend exclusive: day after the inclusive end"
+        );
+        let detail = format_detail("july", &events);
+        assert!(
+            detail.contains("2026-07-14..2026-07-17  all-day"),
+            "detail shows the inclusive range: {detail}"
+        );
+    }
+
+    #[test]
+    fn a_timed_range_is_one_continuous_block() {
+        let (start, end) = july();
+        let events = agenda_events(ORG, "calendar.org", start, end);
+        let shift = events
+            .iter()
+            .find(|e| e.title.contains("Overnight"))
+            .unwrap();
+        assert!(!shift.all_day);
+        assert!(shift.start.starts_with("2026-07-20T22:00"));
+        assert!(shift.end.starts_with("2026-07-21T06:00"));
+    }
+
+    #[test]
+    fn a_range_straddling_the_window_start_is_kept() {
+        // Window opens mid-conference: the stay must still appear.
+        let start = NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let end = NaiveDate::from_ymd_opt(2026, 8, 1).unwrap();
+        let events = agenda_events(ORG, "calendar.org", start, end);
+        assert!(
+            events.iter().any(|e| e.title.contains("Berlin")),
+            "started 07-14, window opens 07-16 — still spanning"
+        );
     }
 
     #[test]

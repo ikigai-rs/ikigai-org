@@ -4,7 +4,9 @@ The org-mode agenda as ikigai ROC resources. `urn:org:agenda:{period}` (today ·
 tomorrow · week · month · year · month names · `YYYY-MM` · `YYYY-MM-DD` · an
 end-inclusive range `YYYY-MM-DD..YYYY-MM-DD`; bare = week) reads **date-fixed
 events** — headlines with active `<…>` timestamps, repeaters
-(`+1w`, `+1y`, …) expanded into the window — from org files, and serves them as
+(`+1w`, `+1y`, …) expanded into the window, and `<start>--<end>` ranges as
+ONE spanning event (all-day across days, or a continuous timed block; a
+range straddling the window edge is kept) — from org files, and serves them as
 text or as the **same skolemized Turtle event graph** `urn:personal:calendar`
 speaks (`urn:event:{uid}`, `ical:` vocabulary, `ik:calendar` provenance, no
 blank nodes) — so org and native calendars **union and diff as graphs**.
