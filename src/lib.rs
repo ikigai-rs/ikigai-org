@@ -387,7 +387,16 @@ pub fn agenda_events(
                             let until = to.unwrap_or_else(|| {
                                 (NaiveDateTime::new(date, from) + Duration::hours(1)).time()
                             });
-                            (rfc3339(date, from), rfc3339(date, until), false)
+                            // An end at or before the start crosses midnight: org's
+                            // `<… 20:30-00:30>` means 00:30 the NEXT day (as does the
+                            // +1h default on a 23:45 start). EventKit rejects
+                            // end<=start, and the org meaning is unambiguous.
+                            let end_date = if until <= from {
+                                date + Duration::days(1)
+                            } else {
+                                date
+                            };
+                            (rfc3339(date, from), rfc3339(end_date, until), false)
                         }
                         (None, None) => {
                             let midnight = NaiveTime::from_hms_opt(0, 0, 0).expect("midnight");
@@ -658,6 +667,27 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
             NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
         )
+    }
+
+    #[test]
+    fn a_time_range_crossing_midnight_ends_the_next_day() {
+        // <Mon 20:30-00:30> — org's single-stamp form for a class running past
+        // midnight (found live: the India-cohort teaching block). End <= start
+        // means next day, never an inverted event.
+        let org = "* Night class\n  <2026-08-31 Mon 20:30-00:30>\n\n* Late cap\n  <2026-08-31 Mon 23:45>\n";
+        let events = agenda_events(
+            org,
+            "t.org",
+            NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+        );
+        let class = events.iter().find(|e| e.title == "Night class").unwrap();
+        assert!(class.start.starts_with("2026-08-31T20:30"));
+        assert!(class.end.starts_with("2026-09-01T00:30"), "{}", class.end);
+        // the +1h default wrapping midnight gets the same treatment
+        let cap = events.iter().find(|e| e.title == "Late cap").unwrap();
+        assert!(cap.start.starts_with("2026-08-31T23:45"));
+        assert!(cap.end.starts_with("2026-09-01T00:45"), "{}", cap.end);
     }
 
     #[test]
