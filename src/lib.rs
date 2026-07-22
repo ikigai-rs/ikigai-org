@@ -18,7 +18,9 @@
 //! timestamps are ignored. A `<start>--<end>` pair is one spanning event.
 //! Untimed stamps are all-day; a timed stamp without
 //! an end defaults to one hour. Repeaters (`+1w`, `+1y`, …) are expanded into
-//! the requested window.
+//! the requested window. Drawer properties: `:ID:` (identity), `:ALERT:` /
+//! `:APPT_WARNTIME:` (alarms), `:LOCATION:` (place), and `:URL:` (the join
+//! link a derived calendar copy carries).
 
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use ikigai_core::{
@@ -42,6 +44,11 @@ pub struct OrgEvent {
     pub end: String,
     /// Date-only timestamp.
     pub all_day: bool,
+    /// The location (`:LOCATION:` drawer property).
+    pub location: Option<String>,
+    /// The join link (`:URL:` drawer property) — a Teams/Zoom URL the derived
+    /// calendar copy should carry.
+    pub url: Option<String>,
     /// Alarms: minutes before start (`:ALERT: 1h 1d` / `:APPT_WARNTIME: 30`).
     pub alerts: Vec<u32>,
 }
@@ -301,6 +308,8 @@ pub fn agenda_events(
     let mut events = Vec::new();
     let mut headline: Option<String> = None;
     let mut org_id: Option<String> = None;
+    let mut location: Option<String> = None;
+    let mut url: Option<String> = None;
     let mut alerts: Vec<u32> = Vec::new();
     for line in org.lines() {
         let trimmed = line.trim_start();
@@ -328,6 +337,8 @@ pub fn agenda_events(
                     Some(title.to_string())
                 };
                 org_id = None;
+                location = None;
+                url = None;
                 alerts = Vec::new();
                 continue;
             }
@@ -337,6 +348,14 @@ pub fn agenda_events(
         }
         if let Some(id) = trimmed.strip_prefix(":ID:") {
             org_id = Some(id.trim().to_string());
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix(":LOCATION:") {
+            location = Some(value.trim().to_string()).filter(|v| !v.is_empty());
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix(":URL:") {
+            url = Some(value.trim().to_string()).filter(|v| !v.is_empty());
             continue;
         }
         if let Some(value) = trimmed.strip_prefix(":ALERT:") {
@@ -419,6 +438,8 @@ pub fn agenda_events(
                         start,
                         end,
                         all_day,
+                        location: location.clone(),
+                        url: url.clone(),
                         alerts: alerts.clone(),
                     });
                 }
@@ -463,7 +484,11 @@ fn format_detail(label: &str, events: &[OrgEvent]) -> String {
             };
             format!("{date}  {}-{}", hhmm(&e.start), hhmm(&e.end))
         };
-        out.push_str(&format!("  {when}  {}  [{}]\n", e.title, e.source));
+        out.push_str(&format!("  {when}  {}  [{}]", e.title, e.source));
+        if let Some(location) = &e.location {
+            out.push_str(&format!("  @ {location}"));
+        }
+        out.push('\n');
     }
     out
 }
@@ -489,6 +514,18 @@ fn format_turtle(events: &[OrgEvent]) -> String {
         }
         for minutes in &e.alerts {
             props.push(format!("ik:alert {minutes}"));
+        }
+        if let Some(location) = &e.location {
+            props.push(format!("ical:location {}", ttl_str(location)));
+        }
+        // The :URL: link deliberately emits as ical:description, NOT ical:url.
+        // The derived view stores the link in EKEvent .notes (its .url field is
+        // the urn:event:{uid} identity token), and .notes reads back as
+        // ical:description — the convergence diff needs the SAME predicate on
+        // both sides, or every linked event delete-recreates on every pass
+        // (the documented infinite-loop class this calendar has already hit).
+        if let Some(url) = &e.url {
+            props.push(format!("ical:description {}", ttl_str(url)));
         }
         ttl.push_str(&format!(
             "\n<urn:event:{}> {} .\n",
@@ -549,11 +586,16 @@ impl Endpoint for AgendaEndpoint {
         }
         events.sort_by(|a, b| a.start.cmp(&b.start));
 
-        // q= — case-insensitive title search (org events carry no location).
+        // q= — case-insensitive title+location search (mirrors urn:personal:calendar).
         let mut label = label;
         if let Ok(q) = inv.inline_str("q") {
             let needle = q.to_lowercase();
-            events.retain(|e| e.title.to_lowercase().contains(&needle));
+            events.retain(|e| {
+                e.title.to_lowercase().contains(&needle)
+                    || e.location
+                        .as_deref()
+                        .is_some_and(|l| l.to_lowercase().contains(&needle))
+            });
             label = format!("{label} · matching \"{q}\"");
         }
 
@@ -600,7 +642,7 @@ impl Endpoint for AgendaEndpoint {
             )
             .input(
                 ArgSpec::new("q")
-                    .summary("search: case-insensitive match over event titles")
+                    .summary("search: case-insensitive match over title + location")
                     .optional(),
             )
             .output("text/plain;charset=utf-8")
@@ -645,6 +687,12 @@ mod tests {
   :ID: dentist-2026-07
   :ALERT: 1h 1d
   <2026-07-22 Wed 10:30-11:15>
+
+* Planning call
+  :ID: planning-call-1
+  :LOCATION: Microsoft Teams Meeting
+  :URL: https://teams.microsoft.com/l/meetup-join/abc
+  <2026-07-15 Wed 09:00-10:00>
 
 * Conference in Berlin
   <2026-07-14 Tue>--<2026-07-17 Fri>
@@ -843,6 +891,48 @@ mod tests {
         let ttl = format_turtle(&events);
         assert!(ttl.contains("ik:alert 60"));
         assert!(ttl.contains("ik:alert 1440"));
+    }
+
+    #[test]
+    fn location_and_url_drawers_are_parsed_and_reset_per_headline() {
+        let (start, end) = july();
+        let events = agenda_events(ORG, "calendar.org", start, end);
+        let call = events.iter().find(|e| e.title == "Planning call").unwrap();
+        assert_eq!(call.location.as_deref(), Some("Microsoft Teams Meeting"));
+        assert_eq!(
+            call.url.as_deref(),
+            Some("https://teams.microsoft.com/l/meetup-join/abc")
+        );
+        // The drawers belong to their heading only — the next entries carry none.
+        let berlin = events.iter().find(|e| e.title.contains("Berlin")).unwrap();
+        assert_eq!(berlin.location, None);
+        assert_eq!(berlin.url, None);
+        // The detail face shows the location, like the calendar side.
+        let detail = format_detail("july", &events);
+        assert!(
+            detail.contains("Planning call  [calendar.org]  @ Microsoft Teams Meeting"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn the_url_drawer_emits_as_ical_description_never_ical_url() {
+        // The derived view stores the link in EKEvent .notes, which reads back
+        // as ical:description — emitting ical:url here would put a predicate in
+        // the desired graph the view can never echo, and the derive would
+        // delete-recreate every linked event forever.
+        let (start, end) = july();
+        let events = agenda_events(ORG, "calendar.org", start, end);
+        let ttl = format_turtle(&events);
+        assert!(ttl.contains("ical:location \"Microsoft Teams Meeting\""));
+        assert!(
+            ttl.contains("ical:description \"https://teams.microsoft.com/l/meetup-join/abc\""),
+            "{ttl}"
+        );
+        assert!(
+            !ttl.contains("ical:url"),
+            "the link must ride the predicate the view reads back: {ttl}"
+        );
     }
 
     #[test]
