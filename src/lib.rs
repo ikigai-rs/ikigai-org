@@ -12,6 +12,20 @@
 //! access — capability-gated, wasm-clean, and golden-thread-ready when the
 //! host's file space is cacheable.
 //!
+//! ## Caching: the files' threads, plus the clock's half
+//! An absolute period (`YYYY-MM`, `YYYY-MM-DD`, a range) is a function of the
+//! org files alone, so its result is marked cacheable and inherits the files'
+//! golden threads and expiry from the sub-resolutions: over a cacheable file
+//! space it is served from the cache until an edit cuts a file's thread; over a
+//! live one (the default `ikigai-fs` mount) it is live too — the effective
+//! expiry is the least cacheable part's. A relative period (`today`, `week`, a
+//! month name) is also a function of the date, which this crate reads from the
+//! KERNEL's clock ([`Invocation::now`]) so a fixed clock makes `today`
+//! deterministic — and such a result is cacheable only until the next local
+//! midnight (`Expiry::At`, evaluated against that same clock). A clockless
+//! kernel takes the date from the wall clock and caches nothing relative.
+//! `tests/conformance.rs` pins all of it: the walk, the cut, the deadline.
+//!
 //! ## What is parsed (v1)
 //! Headlines (`* Title`) whose section carries an active timestamp:
 //! `<YYYY-MM-DD [Day] [HH:MM[-HH:MM]] [+N{d,w,m,y}]>`. Inactive `[…]`
@@ -32,7 +46,7 @@
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use ikigai_core::{
     ArgSpec, Description, Endpoint, EndpointSpace, Error, Exact, Invocation, Iri, ReprType,
-    Representation, Result, UriTemplate, Verb,
+    Representation, Result, Time, UriTemplate, Verb,
 };
 use std::collections::HashSet;
 
@@ -191,6 +205,37 @@ fn bad_period(period: &str) -> Error {
         "urn:org:agenda:{period}: unknown period — try today, tomorrow, week, month, year, \
          a month name, YYYY-MM, YYYY-MM-DD, or YYYY-MM-DD..YYYY-MM-DD"
     ))
+}
+
+/// Whether a period names its window RELATIVE to today (`today`, `week`, a bare
+/// month name — July of the current year) rather than by absolute dates
+/// (`YYYY-MM`, `YYYY-MM-DD`, `YYYY-MM-DD..YYYY-MM-DD`). A relative window moves
+/// at local midnight; an absolute one is a function of the org files alone.
+fn is_relative(period: &str) -> bool {
+    !(period.contains("..") || period.chars().next().is_some_and(|c| c.is_ascii_digit()))
+}
+
+/// The local calendar date at `now` (the kernel's clock, in the process's time
+/// zone — the same zone [`rfc3339`] renders in).
+fn local_date(now: Time) -> Option<NaiveDate> {
+    Local
+        .timestamp_millis_opt(i64::try_from(now.as_millis()).ok()?)
+        .earliest()
+        .map(|t| t.date_naive())
+}
+
+/// The instant the next local day begins: when every relative window computed
+/// from `today` stops being true. `None` if the zone has no such instant (a DST
+/// transition at midnight), in which case the result simply is not cached.
+fn next_local_midnight(today: NaiveDate) -> Option<Time> {
+    let midnight = NaiveDateTime::new(
+        today + Duration::days(1),
+        NaiveTime::from_hms_opt(0, 0, 0).expect("midnight"),
+    );
+    let at = Local.from_local_datetime(&midnight).earliest()?;
+    u64::try_from(at.timestamp_millis())
+        .ok()
+        .map(Time::from_millis)
 }
 
 fn month_range(year: i32, month: u32) -> (NaiveDate, NaiveDate, String) {
@@ -757,6 +802,10 @@ fn ttl_str(s: &str) -> String {
 
 // ---- the endpoint ----------------------------------------------------------------
 
+/// The datatype every input here is: a period token, a media type, a search
+/// string.
+const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
+
 /// `urn:org:agenda[:{period}]` — the org agenda for a period (default `week`),
 /// sourced through the kernel from the configured org-file resources.
 pub struct AgendaEndpoint {
@@ -779,7 +828,13 @@ impl Endpoint for AgendaEndpoint {
             .get("period")
             .map(str::to_string)
             .unwrap_or_else(|| "week".to_string());
-        let (win_start, win_end, label) = period_range(&period, Local::now().date_naive())?;
+        // "Today" is the KERNEL's clock when it has one — a replay harness or a
+        // test hands the kernel a fixed instant and `today` follows it. Only a
+        // clockless kernel falls back to the wall clock, and then nothing
+        // relative is cached (there is no clock to expire it against).
+        let clock_today = inv.now().and_then(local_date);
+        let today = clock_today.unwrap_or_else(|| Local::now().date_naive());
+        let (win_start, win_end, label) = period_range(&period, today)?;
 
         let mut events = Vec::new();
         for file in &self.files {
@@ -813,16 +868,35 @@ impl Endpoint for AgendaEndpoint {
             .inline_str("as")
             .map(|s| s.contains("turtle"))
             .unwrap_or(false);
-        if want_turtle {
-            return Ok(Representation::new(
+        let repr = if want_turtle {
+            Representation::new(
                 ReprType::new("text/turtle").with_param("charset", "utf-8"),
                 format_turtle(&events).into_bytes(),
-            ));
-        }
-        Ok(Representation::new(
-            ReprType::new("text/plain").with_param("charset", "utf-8"),
-            format_detail(&label, &events).into_bytes(),
-        ))
+            )
+        } else {
+            Representation::new(
+                ReprType::new("text/plain").with_param("charset", "utf-8"),
+                format_detail(&label, &events).into_bytes(),
+            )
+        };
+        // Cacheability. The org files were read through `inv.source`, so the
+        // kernel already carries their golden threads and their expiry into this
+        // result: over a cacheable file space the agenda is cached until a file's
+        // thread is cut; over a live one (the default `ikigai-fs` mount) the
+        // effective expiry is `Always` and nothing here changes that. What THIS
+        // endpoint adds is the clock's half: an absolute window is a function of
+        // the files alone, so it is marked cacheable outright; a relative window
+        // is also a function of today, so it is cacheable only until the next
+        // local midnight — `Expiry::At`, which the kernel evaluates against the
+        // same clock `today` came from, and declines to cache when it has none.
+        Ok(if is_relative(&period) {
+            match clock_today.and_then(next_local_midnight) {
+                Some(deadline) => repr.cacheable_until(deadline),
+                None => repr,
+            }
+        } else {
+            repr.cacheable()
+        })
     }
 
     fn name(&self) -> &str {
@@ -834,28 +908,35 @@ impl Endpoint for AgendaEndpoint {
             .title("Org agenda")
             .summary(
                 "Date-fixed events from the configured org files for a period \
-                 (urn:org:agenda:{period}: today, tomorrow, week, month, a month name, \
-                 YYYY-MM, YYYY-MM-DD; bare = week), repeaters expanded. as=text/turtle \
-                 renders the same skolemized event graph as urn:personal:calendar.",
+                 (urn:org:agenda:{period}: today, tomorrow, week, month, year, a month \
+                 name, YYYY-MM, YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD; bare = week), \
+                 repeaters expanded. as=text/turtle renders the same skolemized event \
+                 graph as urn:personal:calendar.",
             )
             .verb(Verb::Source)
             .verb(Verb::Meta)
             .input(
                 ArgSpec::new("period")
                     .summary("the time window, captured from the IRI (default: week)")
-                    .binding(),
+                    .binding()
+                    .class(XSD_STRING)
+                    .default_value("week"),
             )
             .input(
                 ArgSpec::new("as")
                     .summary("text/turtle for the skolemized event graph")
-                    .optional(),
+                    .class(XSD_STRING)
+                    .one_of(["text/plain", "text/turtle"])
+                    .default_value("text/plain"),
             )
             .input(
                 ArgSpec::new("q")
                     .summary("search: case-insensitive match over title + location")
+                    .class(XSD_STRING)
                     .optional(),
             )
             .output("text/plain;charset=utf-8")
+            .output("text/turtle;charset=utf-8")
     }
 }
 
@@ -1361,6 +1442,18 @@ SCHEDULED: <2026-08-25 Tue 11:00-11:30>
         assert!(ttl.contains("<urn:event:dentist-2026-07>"));
         assert!(ttl.contains("ik:calendar \"calendar.org\""));
         assert!(!ttl.contains("_:"), "skolemized — no blank nodes");
+    }
+
+    #[test]
+    fn relative_periods_move_with_today_and_absolute_ones_do_not() {
+        for relative in [
+            "today", "tomorrow", "week", "month", "year", "july", "december",
+        ] {
+            assert!(is_relative(relative), "{relative}");
+        }
+        for absolute in ["2026-07", "2026-07-02", "2026-07-01..2026-07-31"] {
+            assert!(!is_relative(absolute), "{absolute}");
+        }
     }
 
     #[test]

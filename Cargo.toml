@@ -1,6 +1,6 @@
 [package]
 name = "ikigai-org"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Org-mode agenda as ikigai ROC resources: urn:org:agenda:{period} reads date-fixed events (active timestamps, with repeater expansion) from org files and serves them as text or as the same skolemized Turtle event graph urn:personal:calendar speaks — so org and native calendars union and diff as graphs."
@@ -19,3 +19,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 
 [dev-dependencies]
 futures = "0.3"
+# The module recipe as one test (`tests/conformance.rs`): every endpoint this
+# crate binds, every action each declares, every checkable rule at once. 0.1.0 is
+# the first release; it pulls ikigai-core 0.1.67 (`Kernel::entries` listing the
+# kernel's own operations), which the caret above admits.
+ikigai-conformance = "0.1.0"

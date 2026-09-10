@@ -15,6 +15,14 @@ The org files are read **through the kernel**: the host binds them (e.g. an
 `ikigai-fs` space jailed to the org directory at `urn:orgfile:{path}`) and hands
 this space their IRIs — capability-gated, wasm-clean, golden-thread-ready.
 
+Caching follows the files and the clock. An absolute period (`YYYY-MM`,
+`YYYY-MM-DD`, a range) is a function of the org files alone, so it is cached
+under their golden threads whenever the host's file space is cacheable (an edit
+that cuts a file's thread recomputes it; over a live file space it is live too).
+A relative period (`today`, `week`, a month name) also depends on the date,
+which comes from the **kernel's clock** — so it is cached only until the next
+local midnight, and not at all on a clockless kernel.
+
 Event identity: an org `:ID:` property wins; otherwise a stable FNV-1a of
 `title|timestamp`, with repeater occurrences date-suffixed (`…-2026-07-03`).
 
@@ -28,3 +36,12 @@ comma separated, `m`/`h`/`d` suffixes, bare numbers are minutes) or an org
 `:APPT_WARNTIME:` property becomes multi-valued `ik:alert` (minutes before
 start) on the event — the same property `urn:personal:calendar` reads and
 writes, so alarms survive the graph round-trip onto a derived calendar.
+
+Conformance: `tests/conformance.rs` runs
+[`ikigai-conformance`](https://github.com/ikigai-rs/ikigai-conformance) over a
+fixture kernel (an in-memory org file space at `urn:orgfile:{path}`) and passes
+with no opt-outs — typed inputs, the declared `text/turtle` face skolemized
+under `urn:event:{uid}` with only `ical:` and `ik:` terms the vocabulary
+defines, and the cache contract above pinned by hand: edit + cut recomputes, no
+cut serves stale, a relative period expires at midnight, a live file space
+leaves the agenda live.
