@@ -369,7 +369,8 @@ fn a_live_file_space_leaves_the_agenda_live() {
 }
 
 /// The cache contract, with the read counter the suite lacks: an absolute
-/// period is served from the cache under exactly the file's thread; editing the
+/// period is served from the cache under the file's thread (and its own name's,
+/// nothing foreign); editing the
 /// file without cutting serves the OLD agenda (stale by design — a host that
 /// caches its files must cut on change, as `ikigai-fs`'s Sink and the
 /// filesystem watcher do); cutting recomputes from the edited file.
@@ -386,11 +387,18 @@ fn an_edit_needs_a_cut_and_a_cut_recomputes() {
         Expiry::Never,
         "absolute: a function of the file"
     );
-    let threads: Vec<String> = first.threads().iter().map(|t| t.to_string()).collect();
+    // Since core 0.1.73 a cacheable answer also hangs on its own name's thread,
+    // so that one is set aside; anything else besides the file is foreign.
+    let threads: Vec<String> = first
+        .threads()
+        .iter()
+        .map(|t| t.to_string())
+        .filter(|t| t != ABSOLUTE_IRI)
+        .collect();
     assert_eq!(
         threads,
         [FILE_IRI],
-        "cached under exactly the file's thread"
+        "cached under the file's thread and its own name's, no other"
     );
     assert!(agenda.is_cached(&source(ABSOLUTE_IRI)));
     assert_eq!(agenda.file.reads(), 1);
