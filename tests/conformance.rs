@@ -13,11 +13,18 @@
 //! as a module endpoint too (the suite walks everything bound), so it conforms
 //! itself. Two walks, because the host decides how the files are served:
 //!
-//! - **cacheable** ([`conforms`]): the file is `.cacheable()` under the thread
-//!   `urn:orgfile:calendar.org`, as `ikigai_fs::cacheable_space` serves one. The
-//!   agenda inherits that thread through the sub-resolution and is declared
-//!   `cacheable`, so the suite holds it to a real cache hit with a non-empty
-//!   thread set — the golden-thread promise the crate docs make.
+//! - **cacheable** ([`conforms`]): the file is `.cacheable()` under a golden
+//!   thread, as `ikigai_fs::cacheable_space` serves one. The agenda inherits
+//!   that thread through the sub-resolution and is declared `cacheable`, so the
+//!   suite holds it to a real cache hit with a thread besides its own name — the
+//!   golden-thread promise the crate docs make. The fixture names the thread of
+//!   its STATE (`urn:conformance:store:calendar.org`), not its own IRI: since
+//!   core 0.1.73 the kernel hangs every cacheable read on its own name already,
+//!   so a Source-only fixture threading only that name is indistinguishable from
+//!   one that names nothing, and `CACHEABLE` reports it (conformance 0.5.0).
+//!   `ikigai-fs` itself may thread its own IRI because it declares the `Sink` and
+//!   `Delete` whose auto-cut fires on that name; the fixture has no write, so its
+//!   "watcher" (the tests' `cut`) cuts the state thread instead.
 //! - **live** ([`a_live_file_space_leaves_the_agenda_live`]): the file is served
 //!   uncacheable, which is what the host mounts today. The effective expiry is
 //!   the least cacheable part's, so the agenda is live too — correct, and the
@@ -55,6 +62,13 @@
 //!   ([`the_fixture_ids_are_the_description_ids`]): a `Fixture` that matches no
 //!   description is silently inert (PENDING #57).
 //!
+//! ## The space is host-named
+//!
+//! [`ikigai_org::space`] takes the org-file IRIs it reads, so its doors serve
+//! whatever the host handed it: it is instance-built, and only the host knows
+//! which instance it passed in. Every walk declares it with
+//! `Suite::host_named_space`, and `SPACE-NAME` holds it to claiming no name.
+//!
 //! No opt-outs, no module namespace (the Turtle face uses `ical:` and three
 //! `ik:` terms `ikigai-vocab` defines), NAMES runs (`org-agenda` is kebab-case).
 
@@ -75,10 +89,12 @@ const AGENDA: &str = "org-agenda";
 /// The fixture file space's description id.
 const ORGFILE: &str = "orgfile";
 
-/// The one org file the fixture serves, and the IRI the agenda reads it at —
-/// which is also the golden thread a cacheable read declares.
+/// The one org file the fixture serves, and the IRI the agenda reads it at.
 const FILE: &str = "calendar.org";
 const FILE_IRI: &str = "urn:orgfile:calendar.org";
+/// The golden thread a cacheable read of the file declares: its state's, which
+/// is what a watcher cuts when the file changes on disk.
+const FILE_STATE: &str = "urn:conformance:store:calendar.org";
 
 /// An absolute period covering the fixture's events: a function of the file
 /// alone, so the walk over the template entry does not depend on the clock.
@@ -179,7 +195,7 @@ impl Endpoint for OrgFile {
         let text = self.text.lock().expect("text lock").clone();
         let repr = Representation::new(ReprType::new("text/plain"), text.into_bytes());
         Ok(if self.cacheable {
-            repr.cacheable().depends_on(inv.request.target.as_str())
+            repr.cacheable().depends_on(FILE_STATE)
         } else {
             repr
         })
@@ -203,10 +219,12 @@ impl Endpoint for OrgFile {
 }
 
 /// The kernel under test: the agenda space over one fixture file, with or
-/// without a clock.
+/// without a clock. `org` is the very space the kernel serves, kept so the
+/// suite can declare it host-named.
 struct Agenda {
     kernel: Kernel,
     file: Arc<OrgFile>,
+    org: Arc<EndpointSpace>,
 }
 
 impl Agenda {
@@ -215,15 +233,13 @@ impl Agenda {
             UriTemplate::parse("urn:orgfile:{path}").expect("a valid template"),
             file.clone(),
         );
-        let space = Fallback::new(vec![
-            Arc::new(files),
-            Arc::new(ikigai_org::space(vec![FILE_IRI.to_string()])),
-        ]);
+        let org = Arc::new(ikigai_org::space(vec![FILE_IRI.to_string()]));
+        let space = Fallback::new(vec![Arc::new(files), org.clone()]);
         let mut kernel = Kernel::new(Arc::new(space));
         if let Some(millis) = clock {
             kernel = kernel.with_clock(Arc::new(FixedClock::at(millis)));
         }
-        Agenda { kernel, file }
+        Agenda { kernel, file, org }
     }
 
     /// The host's golden-thread-ready shape: a cacheable file space and a clock.
@@ -262,11 +278,14 @@ fn source(iri: &str) -> Request {
 }
 
 /// The suite, configured for this module: the fixture file bound by name (the
-/// derived `x` names no file) and an absolute period for the template entry.
-fn suite() -> Suite {
+/// derived `x` names no file), an absolute period for the template entry, and
+/// the agenda's space declared host-named (it is built from the files it is
+/// handed).
+fn suite(agenda: &Agenda) -> Suite {
     Suite::new()
         .fixture(Fixture::new(ORGFILE, Verb::Source).binding("path", FILE))
         .fixture(Fixture::new(AGENDA, Verb::Source).binding("period", ABSOLUTE))
+        .host_named_space("ikigai_org::space(files)", agenda.org.clone())
 }
 
 /// The walk saw the agenda and the fixture, three actions (the agenda's two
@@ -300,7 +319,7 @@ fn findings(report: &Report) -> Vec<(&str, Option<Verb>, Check)> {
 #[test]
 fn conforms() {
     let agenda = Agenda::cacheable();
-    let report = suite()
+    let report = suite(&agenda)
         .cacheable(AGENDA)
         .cacheable(ORGFILE)
         .run_blocking(&agenda.kernel);
@@ -330,7 +349,7 @@ fn conforms() {
 #[test]
 fn a_live_file_space_leaves_the_agenda_live() {
     let agenda = Agenda::new(OrgFile::new(false, None), Some(noon()));
-    let report = suite().run_blocking(&agenda.kernel);
+    let report = suite(&agenda).run_blocking(&agenda.kernel);
     eprintln!("[live file space]\n{report}");
     assert!(report.is_clean(), "{report}");
     assert_shape(&report);
@@ -349,7 +368,9 @@ fn a_live_file_space_leaves_the_agenda_live() {
 
     // Declared cacheable over a live file space: one finding per agenda entry,
     // naming the declaration, and nothing else.
-    let report = suite().cacheable(AGENDA).run_blocking(&agenda.kernel);
+    let report = suite(&agenda)
+        .cacheable(AGENDA)
+        .run_blocking(&agenda.kernel);
     eprintln!("[live file space, org-agenda declared cacheable]\n{report}");
     assert_eq!(
         findings(&report),
@@ -388,8 +409,10 @@ fn an_edit_needs_a_cut_and_a_cut_recomputes() {
         "absolute: a function of the file"
     );
     // Since core 0.1.73 a cacheable answer also hangs on its own name's thread,
-    // so that one is set aside; anything else besides the file is foreign.
-    let threads: Vec<String> = first
+    // so that one is set aside. What remains is the file's: its state thread and
+    // the file read's own name, which the kernel hung it on and the
+    // sub-resolution carried up. Anything else is foreign.
+    let threads: BTreeSet<String> = first
         .threads()
         .iter()
         .map(|t| t.to_string())
@@ -397,8 +420,8 @@ fn an_edit_needs_a_cut_and_a_cut_recomputes() {
         .collect();
     assert_eq!(
         threads,
-        [FILE_IRI],
-        "cached under the file's thread and its own name's, no other"
+        BTreeSet::from([FILE_STATE.to_string(), FILE_IRI.to_string()]),
+        "cached under the file's threads and its own name's, no other"
     );
     assert!(agenda.is_cached(&source(ABSOLUTE_IRI)));
     assert_eq!(agenda.file.reads(), 1);
@@ -413,9 +436,9 @@ fn an_edit_needs_a_cut_and_a_cut_recomputes() {
     );
     assert_eq!(agenda.file.reads(), 1, "no cut: the file was not re-read");
 
-    // Cut the file's thread (what a Sink through the kernel or a watcher does):
+    // Cut the file's state thread (what a watcher does when the file changes):
     // the next read recomputes from the edited file.
-    agenda.kernel.cut(FILE_IRI);
+    agenda.kernel.cut(FILE_STATE);
     assert!(
         !agenda.is_cached(&source(ABSOLUTE_IRI)),
         "the cut evicted it"
@@ -477,8 +500,8 @@ fn a_relative_period_expires_at_local_midnight() {
         "cacheable until the next local midnight, and no later"
     );
     assert!(
-        repr.threads().iter().any(|t| t.to_string() == FILE_IRI),
-        "and still under the file's thread"
+        repr.threads().iter().any(|t| t.to_string() == FILE_STATE),
+        "and still under the file's state thread"
     );
     assert!(
         agenda.is_cached(&source(TODAY_IRI)),
@@ -680,7 +703,7 @@ fn the_file_gate_is_the_hosts_and_passes_through_typed() {
     .expect("UTF-8");
     assert!(text.contains("Dinner with the Hendersons"), "{text}");
 
-    let report = suite().run_blocking(&agenda.kernel);
+    let report = suite(&agenda).run_blocking(&agenda.kernel);
     eprintln!("[gated file space]\n{report}");
     assert_eq!(
         findings(&report),

@@ -14,6 +14,8 @@ blank nodes) — so org and native calendars **union and diff as graphs**.
 The org files are read **through the kernel**: the host binds them (e.g. an
 `ikigai-fs` space jailed to the org directory at `urn:orgfile:{path}`) and hands
 this space their IRIs — capability-gated, wasm-clean, golden-thread-ready.
+Because its doors serve whatever files it was handed, `space(files)` claims no
+name (no `urn:iki:space:org`): the host names the instance it built.
 
 Caching follows the files and the clock. An absolute period (`YYYY-MM`,
 `YYYY-MM-DD`, a range) is a function of the org files alone, so it is cached
@@ -44,4 +46,5 @@ with no opt-outs — typed inputs, the declared `text/turtle` face skolemized
 under `urn:event:{uid}` with only `ical:` and `ik:` terms the vocabulary
 defines, and the cache contract above pinned by hand: edit + cut recomputes, no
 cut serves stale, a relative period expires at midnight, a live file space
-leaves the agenda live.
+leaves the agenda live. The space is declared host-named, and `SPACE-NAME`
+holds it to claiming nothing.
