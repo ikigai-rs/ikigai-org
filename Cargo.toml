@@ -12,7 +12,10 @@ keywords = ["ikigai", "roc", "org-mode", "calendar", "agenda"]
 categories = ["date-and-time"]
 
 [dependencies]
-ikigai-core = "0.1.32"
+# 0.1.89: the floor ikigai-conformance 0.6.0 needs (`space_iri`, and `bind`
+# dropping a name). The crate's own API floor is lower; this is the floor of the
+# graph it is tested against, so it states the truth about what CI exercises.
+ikigai-core = "0.1.89"
 async-trait = "0.1"
 # Local-time period math + timestamp arithmetic (repeater expansion).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -20,7 +23,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 [dev-dependencies]
 futures = "0.3"
 # The module recipe as one test (`tests/conformance.rs`): every endpoint this
-# crate binds, every action each declares, every checkable rule at once. 0.1.0 is
-# the first release; it pulls ikigai-core 0.1.67 (`Kernel::entries` listing the
-# kernel's own operations), which the caret above admits.
-ikigai-conformance = "0.2.0"
+# crate binds, every action each declares, every checkable rule at once. 0.6.0
+# adds SPACE-NAME (`space(files)` is declared host-named). A `^0.x` pin is a
+# ceiling as well as a floor, so this is raised deliberately per minor release.
+ikigai-conformance = "0.6.0"
