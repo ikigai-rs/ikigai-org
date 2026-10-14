@@ -12,10 +12,11 @@ keywords = ["ikigai", "roc", "org-mode", "calendar", "agenda"]
 categories = ["date-and-time"]
 
 [dependencies]
-# 0.1.89: the floor ikigai-conformance 0.6.0 needs (`space_iri`, and `bind`
-# dropping a name). The crate's own API floor is lower; this is the floor of the
-# graph it is tested against, so it states the truth about what CI exercises.
-ikigai-core = "0.1.89"
+# 0.1.101: the floor of the graph ikigai-conformance 0.8.0 is tested against
+# (it pins ikigai-vocab 0.1.101, which requires ikigai-core ^0.1.101). The crate's
+# own API floor is lower (0.6.0 needed 0.1.89 for `space_iri`); this is the floor
+# of the graph CI exercises, so it states the truth about what was tested.
+ikigai-core = "0.1.101"
 async-trait = "0.1"
 # Local-time period math + timestamp arithmetic (repeater expansion).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -24,6 +25,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 futures = "0.3"
 # The module recipe as one test (`tests/conformance.rs`): every endpoint this
 # crate binds, every action each declares, every checkable rule at once. 0.6.0
-# adds SPACE-NAME (`space(files)` is declared host-named). A `^0.x` pin is a
-# ceiling as well as a floor, so this is raised deliberately per minor release.
-ikigai-conformance = "0.6.0"
+# added SPACE-NAME (`space(files)` is declared host-named); 0.7.0 VALIDATE; 0.8.0
+# REQUIRED, which has nothing to drop here (see the test's module docs). A `^0.x`
+# pin is a ceiling as well as a floor, so this is raised deliberately per minor
+# release.
+ikigai-conformance = "0.8.0"

@@ -47,4 +47,5 @@ under `urn:event:{uid}` with only `ical:` and `ik:` terms the vocabulary
 defines, and the cache contract above pinned by hand: edit + cut recomputes, no
 cut serves stale, a relative period expires at midnight, a live file space
 leaves the agenda live. The space is declared host-named, and `SPACE-NAME`
-holds it to claiming nothing.
+holds it to claiming nothing. `REQUIRED` (0.8.0) runs and has nothing to
+drop: every input is a binding, defaulted, or optional, and a test pins that.
