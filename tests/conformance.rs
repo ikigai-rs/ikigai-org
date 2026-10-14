@@ -69,8 +69,20 @@
 //! which instance it passed in. Every walk declares it with
 //! `Suite::host_named_space`, and `SPACE-NAME` holds it to claiming no name.
 //!
+//! ## REQUIRED runs and has nothing to drop
+//!
+//! Conformance 0.8.0's `REQUIRED` drops each required BY-VALUE input without a
+//! default and expects a typed refusal. Here there is none: `period` and the
+//! fixture's `path` are template bindings, `as` carries a default (which makes it
+//! optional), and `q` is optional. So the check is vacuous for this crate, not
+//! passed, and [`required_has_nothing_to_drop`] says so in a way that goes red
+//! the day an action gains such an input, which is when `REQUIRED` starts to hold
+//! something and that test should go.
+//!
 //! No opt-outs, no module namespace (the Turtle face uses `ical:` and three
 //! `ik:` terms `ikigai-vocab` defines), NAMES runs (`org-agenda` is kebab-case).
+//! No `Suite::own`: this is not a composing host, and the one endpoint beside
+//! the module is the test's own fixture, walked on purpose so it conforms too.
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -80,8 +92,8 @@ use chrono::{Duration, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use ikigai_conformance::{rdf, Check, Fixture, Report, Suite};
 use ikigai_core::{
     ArgRef, ArgSpec, Capability, Description, Endpoint, EndpointSpace, Error, Expiry, Fallback,
-    FixedClock, Invocation, Iri, Kernel, ReprType, Representation, Request, Result, Time,
-    UriTemplate, Verb,
+    FixedClock, InputSource, Invocation, Iri, Kernel, ReprType, Representation, Request, Result,
+    Time, UriTemplate, Verb,
 };
 
 /// The agenda's description id, at both of its patterns.
@@ -738,5 +750,35 @@ fn the_fixture_ids_are_the_description_ids() {
             .describe(&Iri::parse(iri).expect("a valid IRI"))
             .unwrap_or_else(|| panic!("{iri} describes itself"));
         assert_eq!(description.id, id, "{iri}");
+    }
+}
+
+/// `REQUIRED` is vacuous here, and this pins why rather than letting a clean
+/// report imply it held something: no action the walk reaches declares a
+/// required by-value input without a default (the inputs it would drop). When
+/// one is added, this goes red, and the right fix is to delete this test, since
+/// `REQUIRED` in [`conforms`] then holds the new input to a typed refusal.
+#[test]
+fn required_has_nothing_to_drop() {
+    let agenda = Agenda::cacheable();
+    for iri in [AGENDA_IRI, ABSOLUTE_IRI, FILE_IRI] {
+        let description = agenda
+            .kernel
+            .describe(&Iri::parse(iri).expect("a valid IRI"))
+            .unwrap_or_else(|| panic!("{iri} describes itself"));
+        for spec in description.action_specs() {
+            let droppable: Vec<&str> = spec
+                .inputs
+                .iter()
+                .filter(|i| i.required && i.source == InputSource::Argument && i.default.is_none())
+                .map(|i| i.name.as_str())
+                .collect();
+            assert!(
+                droppable.is_empty(),
+                "{iri} {:?} declares required by-value input(s) {droppable:?}: REQUIRED now \
+                 probes them, so delete this test",
+                spec.verb
+            );
+        }
     }
 }
