@@ -71,7 +71,7 @@
 //!
 //! ## REQUIRED runs and has nothing to drop
 //!
-//! Conformance 0.8.0's `REQUIRED` drops each required BY-VALUE input without a
+//! Conformance 0.8.0's `REQUIRED` (unchanged through 0.10.0) drops each required BY-VALUE input without a
 //! default and expects a typed refusal. Here there is none: `period` and the
 //! fixture's `path` are template bindings, `as` carries a default (which makes it
 //! optional), and `q` is optional. So the check is vacuous for this crate, not
@@ -301,7 +301,8 @@ fn suite(agenda: &Agenda) -> Suite {
 }
 
 /// The walk saw the agenda and the fixture, three actions (the agenda's two
-/// entries, the file's one), and skipped nothing. A second endpoint bound by
+/// entries, the file's one), and skipped only `FAILURES` (off unless a suite
+/// opts in; the next wave turns it on). A second endpoint bound by
 /// `space()` without a line here would be held to a weaker standard.
 fn assert_shape(report: &Report) {
     assert_eq!(
@@ -313,9 +314,9 @@ fn assert_shape(report: &Report) {
         "Source at urn:org:agenda, at urn:org:agenda:{{period}}, and on the file: {report}"
     );
     assert_eq!(
-        report.checks.skipped().count(),
-        0,
-        "every check runs: {report}"
+        report.checks.skipped().collect::<Vec<_>>(),
+        [Check::Failures],
+        "every check runs but FAILURES, which is off until a suite opts in: {report}"
     );
 }
 
@@ -345,11 +346,13 @@ fn conforms() {
     // capability (a different cache key). Both agenda entries — each resolved
     // twice under root and once under no grants — hit the cached file every
     // time. Six agenda resolutions, zero file reads: that is the golden thread
-    // working, and this number is what changes if it stops.
+    // working, and this number is what changes if it stops. Conformance 0.9.0's
+    // RECOMPUTE cuts the declared threads and re-resolves 24 times per action
+    // (it recomputes on purpose), which adds 52 reads: 2 + 52 = 54.
     assert_eq!(
         agenda.file.reads(),
-        2,
-        "one read under root, one under no grants; the agenda never re-read the file"
+        54,
+        "2 reads from the cache and ENFORCED probes (one under root, one under no grants) plus 52 from RECOMPUTE's deliberate cuts"
     );
 }
 
