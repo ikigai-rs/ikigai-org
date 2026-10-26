@@ -1,6 +1,6 @@
 [package]
 name = "ikigai-org"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Org-mode agenda as ikigai ROC resources: urn:org:agenda:{period} reads date-fixed events (active timestamps, with repeater expansion) from org files and serves them as text or as the same skolemized Turtle event graph urn:personal:calendar speaks — so org and native calendars union and diff as graphs."
@@ -12,23 +12,15 @@ keywords = ["ikigai", "roc", "org-mode", "calendar", "agenda"]
 categories = ["date-and-time"]
 
 [dependencies]
-# 0.1.101: the floor of the graph ikigai-conformance 0.8.0 is tested against
-# (it pins ikigai-vocab 0.1.101, which requires ikigai-core ^0.1.101). The crate's
-# own API floor is lower (0.6.0 needed 0.1.89 for `space_iri`); this is the floor
-# of the graph CI exercises, so it states the truth about what was tested.
-ikigai-core = "0.1.101"
+# 0.2.0 is the streams release (ledger #2261). The old 0.1 pin meant
+# <0.2.0 under 0.x compatibility rules.
+ikigai-core = "0.2.0"
 async-trait = "0.1"
 # Local-time period math + timestamp arithmetic (repeater expansion).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
 futures = "0.3"
-# The module recipe as one test (`tests/conformance.rs`): every endpoint this
-# crate binds, every action each declares, every checkable rule at once. 0.6.0
-# added SPACE-NAME; 0.7.0 VALIDATE; 0.8.0 REQUIRED (nothing to drop here); 0.9.0
-# core 0.1.105's contract-shape checks (REQUIRED probes input groups, OUTPUTS
-# honors output_from, PIPELINE's named-only line, VALIDATE refuses a default on a
-# binding) and RECOMPUTE; 0.10.0 FAILURES, off unless a suite opts in (this one
-# does not yet). A `^0.x` pin reads as a range, `>=0.10.0, <0.11.0`, so it is
-# raised deliberately per minor release.
-ikigai-conformance = "0.10.0"
+# The module recipe checks every endpoint and declared action, including
+# DATATYPES and FAILURES, enabled by default in 0.11.0.
+ikigai-conformance = "0.11.0"
