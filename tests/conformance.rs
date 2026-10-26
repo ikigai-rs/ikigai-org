@@ -301,8 +301,8 @@ fn suite(agenda: &Agenda) -> Suite {
 }
 
 /// The walk saw the agenda and the fixture, three actions (the agenda's two
-/// entries, the file's one), and skipped only `FAILURES` (off unless a suite
-/// opts in; the next wave turns it on). A second endpoint bound by
+/// entries, the file's one), and skipped no checks, including `DATATYPES`
+/// and `FAILURES` (enabled by default in 0.11.0). A second endpoint bound by
 /// `space()` without a line here would be held to a weaker standard.
 fn assert_shape(report: &Report) {
     assert_eq!(
@@ -315,8 +315,8 @@ fn assert_shape(report: &Report) {
     );
     assert_eq!(
         report.checks.skipped().collect::<Vec<_>>(),
-        [Check::Failures],
-        "every check runs but FAILURES, which is off until a suite opts in: {report}"
+        Vec::<Check>::new(),
+        "every check runs, including DATATYPES and FAILURES: {report}"
     );
 }
 
