@@ -22,5 +22,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 [dev-dependencies]
 futures = "0.3"
 # The module recipe checks every endpoint and declared action, including
-# DATATYPES and FAILURES, enabled by default in 0.11.0.
-ikigai-conformance = "0.11.0"
+# BODIES and BODY-INPUTS, enabled by default in 0.12.0.
+ikigai-conformance = "0.12.0"

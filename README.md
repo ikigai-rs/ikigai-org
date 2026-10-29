@@ -49,3 +49,5 @@ cut serves stale, a relative period expires at midnight, a live file space
 leaves the agenda live. The space is declared host-named, and `SPACE-NAME`
 holds it to claiming nothing. `REQUIRED` (0.8.0) runs and has nothing to
 drop: every input is a binding, defaulted, or optional, and a test pins that.
+`BODIES` (0.12.0) compares `invoke` with `invoke_body` over the kernel's own
+root space; `BODY-INPUTS` has nothing to probe, since no argument reads a body.

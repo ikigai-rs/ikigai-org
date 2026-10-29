@@ -79,6 +79,17 @@
 //! the day an action gains such an input, which is when `REQUIRED` starts to hold
 //! something and that test should go.
 //!
+//! ## BODIES compares, BODY-INPUTS has nothing to probe
+//!
+//! Conformance 0.12.0's `BODIES` invokes each deterministic `Source`'s `invoke`
+//! and `invoke_body` directly in the module space, so every walk hands it the
+//! very `Arc` the kernel was built from (`Suite::body_space`). Over a cacheable
+//! file space it compares the file and the absolute period, and leaves the
+//! current month (expires at local midnight) unprobed with its own reason;
+//! [`conforms`] pins exactly that. `BODY-INPUTS` probes arguments declared
+//! `reads_body`, and no argument here is: the agenda reads its files through
+//! `inv.source`, not `content_body`. So no content store is wired.
+//!
 //! No opt-outs, no module namespace (the Turtle face uses `ical:` and three
 //! `ik:` terms `ikigai-vocab` defines), NAMES runs (`org-agenda` is kebab-case).
 //! No `Suite::own`: this is not a composing host, and the one endpoint beside
@@ -232,11 +243,13 @@ impl Endpoint for OrgFile {
 
 /// The kernel under test: the agenda space over one fixture file, with or
 /// without a clock. `org` is the very space the kernel serves, kept so the
-/// suite can declare it host-named.
+/// suite can declare it host-named; `root` is the very `Arc` the kernel was
+/// built from, kept so `BODIES` can invoke the endpoints in it directly.
 struct Agenda {
     kernel: Kernel,
     file: Arc<OrgFile>,
     org: Arc<EndpointSpace>,
+    root: Arc<Fallback>,
 }
 
 impl Agenda {
@@ -246,12 +259,17 @@ impl Agenda {
             file.clone(),
         );
         let org = Arc::new(ikigai_org::space(vec![FILE_IRI.to_string()]));
-        let space = Fallback::new(vec![Arc::new(files), org.clone()]);
-        let mut kernel = Kernel::new(Arc::new(space));
+        let root = Arc::new(Fallback::new(vec![Arc::new(files), org.clone()]));
+        let mut kernel = Kernel::new(root.clone());
         if let Some(millis) = clock {
             kernel = kernel.with_clock(Arc::new(FixedClock::at(millis)));
         }
-        Agenda { kernel, file, org }
+        Agenda {
+            kernel,
+            file,
+            org,
+            root,
+        }
     }
 
     /// The host's golden-thread-ready shape: a cacheable file space and a clock.
@@ -292,9 +310,11 @@ fn source(iri: &str) -> Request {
 /// The suite, configured for this module: the fixture file bound by name (the
 /// derived `x` names no file), an absolute period for the template entry, and
 /// the agenda's space declared host-named (it is built from the files it is
-/// handed).
+/// handed), and the kernel's own root for `BODIES` (without it every action
+/// is unprobed, not compared).
 fn suite(agenda: &Agenda) -> Suite {
     Suite::new()
+        .body_space(agenda.root.clone())
         .fixture(Fixture::new(ORGFILE, Verb::Source).binding("path", FILE))
         .fixture(Fixture::new(AGENDA, Verb::Source).binding("period", ABSOLUTE))
         .host_named_space("ikigai_org::space(files)", agenda.org.clone())
@@ -340,6 +360,26 @@ fn conforms() {
     eprintln!("[cacheable file space]\n{report}");
     assert!(report.is_clean(), "{report}");
     assert_shape(&report);
+    // BODIES compares every deterministic answer over a cacheable file space.
+    // The one it leaves is `urn:org:agenda`'s current-month answer, which
+    // expires at local midnight (`Expiry::At`): two independent calls cannot
+    // prove agreement across that boundary, so the suite reports it unprobed
+    // with its own reason. Pinned exactly, so the absolute period and the file
+    // stay compared, and if `body_space` falls off `suite()` this goes red
+    // (three unprobed, "module space is unavailable") instead of staying green.
+    assert_eq!(
+        report
+            .unprobed
+            .iter()
+            .map(|u| (u.endpoint.as_str(), u.verb, u.check))
+            .collect::<Vec<_>>(),
+        [(AGENDA, Verb::Source, Check::Bodies)],
+        "{report}"
+    );
+    assert!(
+        report.unprobed[0].reason.contains("time-varying"),
+        "{report}"
+    );
 
     // The footprint: the file was read under root once (the cache probe's first
     // resolution; its second was the hit) and once under ENFORCED's no-grants
@@ -349,10 +389,15 @@ fn conforms() {
     // working, and this number is what changes if it stops. Conformance 0.9.0's
     // RECOMPUTE cuts the declared threads and re-resolves 24 times per action
     // (it recomputes on purpose), which adds 52 reads: 2 + 52 = 54.
+    // Conformance 0.12.0's BODIES adds 4: it invokes the file endpoint's
+    // `invoke` and `invoke_body` directly (2, past the cache), and its bounded
+    // kernel requests run under fresh `urn:cap:stream:memory:{len - 1}`
+    // capabilities, a different cache key, so the file's (382) and one agenda
+    // face's (545) reach the file (2). 54 + 4 = 58.
     assert_eq!(
         agenda.file.reads(),
-        54,
-        "2 reads from the cache and ENFORCED probes (one under root, one under no grants) plus 52 from RECOMPUTE's deliberate cuts"
+        58,
+        "2 reads from the cache and ENFORCED probes (one under root, one under no grants), 52 from RECOMPUTE's deliberate cuts, and 4 from BODIES' direct calls and bounded requests"
     );
 }
 
@@ -694,7 +739,8 @@ fn the_turtle_face_is_the_calendar_event_graph() {
 /// raised, never flattened into an endpoint error. The suite cannot see a gate
 /// in a sub-resolution; walked over a gated fixture it reports the over-offer,
 /// which is the true shape of the composed host and is recorded here rather
-/// than declared away (this crate cannot know the scope to declare).
+/// than declared away (this crate cannot know the scope to declare). `BODIES`
+/// meets the same gate: its bounded request carries no file scope.
 #[test]
 fn the_file_gate_is_the_hosts_and_passes_through_typed() {
     let agenda = Agenda::new(OrgFile::new(true, Some(FS_READ)), Some(noon()));
@@ -725,14 +771,31 @@ fn the_file_gate_is_the_hosts_and_passes_through_typed() {
         [
             (AGENDA, Some(Verb::Source), Check::Enforced),
             (AGENDA, Some(Verb::Source), Check::Enforced),
+            (AGENDA, Some(Verb::Source), Check::Bodies),
         ],
-        "the agenda over-offers by exactly the file's scope, at both patterns: {report}"
+        "the agenda over-offers by exactly the file's scope, at both patterns, and BODIES meets the same gate: {report}"
     );
+    let (enforced, bodies): (Vec<_>, Vec<_>) = report
+        .findings
+        .iter()
+        .partition(|f| f.check == Check::Enforced);
     assert!(
-        report
-            .findings
+        enforced
             .iter()
             .all(|f| f.detail.contains("declares no capability") && f.detail.contains(FS_READ)),
+        "{report}"
+    );
+    // The same over-offer, seen by BODIES (conformance 0.12.0): its bounded
+    // request carries the agenda's declared requirements (none) plus the memory
+    // grant, so the file space refuses it with its own scope before any budget
+    // is reached. The agenda's body contract is not what failed: over an
+    // ungated file space ([`conforms`]) BODIES is clean at both patterns.
+    assert!(
+        bodies
+            .iter()
+            .all(|f| f.detail.contains("expected OverBudget")
+                && f.detail.contains("denied")
+                && f.detail.contains(FS_READ)),
         "{report}"
     );
 }
