@@ -17,6 +17,20 @@ this space their IRIs — capability-gated, wasm-clean, golden-thread-ready.
 Because its doors serve whatever files it was handed, `space(files)` claims no
 name (no `urn:iki:space:org`): the host names the instance it built.
 
+Endpoint ids (for arrangement `door` declarations):
+
+| Pattern | Stable id |
+| --- | --- |
+| `urn:org:agenda` (default week) | `org-agenda` |
+| `urn:org:agenda:{period}` | `org-agenda-period` |
+
+In 0.3.0, the explicit-period door changes from `org-agenda` to
+`org-agenda-period`; update arrangements selecting that door. Both ids follow
+core's IRI-safety requirements and kebab-case convention, and each selects exactly one door.
+The host supplies `urn:orgfile:{path}`; this crate does not bind a file endpoint.
+Give that host mount the id `orgfile` (rather than `file`, which belongs to
+ikigai-fs's `urn:file:{path}` door) when composing both mounts in one kernel.
+
 Caching follows the files and the clock. An absolute period (`YYYY-MM`,
 `YYYY-MM-DD`, a range) is a function of the org files alone, so it is cached
 under their golden threads whenever the host's file space is cacheable (an edit
@@ -49,5 +63,5 @@ cut serves stale, a relative period expires at midnight, a live file space
 leaves the agenda live. The space is declared host-named, and `SPACE-NAME`
 holds it to claiming nothing. `REQUIRED` (0.8.0) runs and has nothing to
 drop: every input is a binding, defaulted, or optional, and a test pins that.
-`BODIES` (0.12.0) compares `invoke` with `invoke_body` over the kernel's own
+`BODIES` (0.12.1) compares `invoke` with `invoke_body` over the kernel's own
 root space; `BODY-INPUTS` has nothing to probe, since no argument reads a body.

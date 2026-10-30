@@ -809,6 +809,8 @@ const XSD_STRING: &str = "http://www.w3.org/2001/XMLSchema#string";
 /// `urn:org:agenda[:{period}]` — the org agenda for a period (default `week`),
 /// sourced through the kernel from the configured org-file resources.
 pub struct AgendaEndpoint {
+    /// Stable door id, distinct for the default and explicit-period patterns.
+    id: &'static str,
     /// The org files as kernel IRIs (e.g. `urn:orgfile:calendar.org`).
     files: Vec<String>,
 }
@@ -900,11 +902,11 @@ impl Endpoint for AgendaEndpoint {
     }
 
     fn name(&self) -> &str {
-        "org-agenda"
+        self.id
     }
 
     fn describe(&self) -> Description {
-        Description::new("org-agenda")
+        Description::new(self.id)
             .title("Org agenda")
             .summary(
                 "Date-fixed events from the configured org files for a period \
@@ -947,12 +949,16 @@ pub fn space(files: Vec<String>) -> EndpointSpace {
         .bind(
             Exact::new("urn:org:agenda"),
             AgendaEndpoint {
+                id: "org-agenda",
                 files: files.clone(),
             },
         )
         .bind(
             UriTemplate::parse("urn:org:agenda:{period}").expect("valid template"),
-            AgendaEndpoint { files },
+            AgendaEndpoint {
+                id: "org-agenda-period",
+                files,
+            },
         )
 }
 

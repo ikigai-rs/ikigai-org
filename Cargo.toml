@@ -1,6 +1,6 @@
 [package]
 name = "ikigai-org"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Org-mode agenda as ikigai ROC resources: urn:org:agenda:{period} reads date-fixed events (active timestamps, with repeater expansion) from org files and serves them as text or as the same skolemized Turtle event graph urn:personal:calendar speaks — so org and native calendars union and diff as graphs."
@@ -22,5 +22,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 [dev-dependencies]
 futures = "0.3"
 # The module recipe checks every endpoint and declared action, including
-# BODIES and BODY-INPUTS, enabled by default in 0.12.0.
-ikigai-conformance = "0.12.0"
+# BODIES and BODY-INPUTS; 0.12.1 keeps bounded probes under baseline authority.
+ikigai-conformance = "0.12.1"

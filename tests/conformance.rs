@@ -1,6 +1,6 @@
-//! The module recipe as one test: `ikigai-conformance` walks the one endpoint
-//! [`ikigai_org::space`] binds — `org-agenda`, at `urn:org:agenda` and
-//! `urn:org:agenda:{period}` — and reports every violation at once.
+//! The module recipe as one test: `ikigai-conformance` walks the two endpoints
+//! [`ikigai_org::space`] binds — `org-agenda` at `urn:org:agenda` and
+//! `org-agenda-period` at `urn:org:agenda:{period}` — and reports every violation at once.
 //!
 //! ## The fixture is a file space, because the agenda reads through the kernel
 //!
@@ -51,8 +51,8 @@
 //!   Turtle face went unprobed for six releases because `as=text/turtle` was
 //!   served without being an output (PENDING #11/#31/#79).
 //! - **The capability gate is the HOST's file space's, not this module's**
-//!   ([`the_file_gate_is_the_hosts_and_passes_through_typed`]): `org-agenda`
-//!   declares no `requires` because it cannot know what the host's file space
+//!   ([`the_file_gate_is_the_hosts_and_passes_through_typed`]): both agenda doors
+//!   declare no `requires` because it cannot know what the host's file space
 //!   enforces (`urn:cap:fs:read:*` for `ikigai-fs`); the gate is reached through
 //!   `inv.source`, and the typed `Denied` passes through unwrapped. ENFORCED
 //!   cannot see a gate in a sub-resolution (PENDING #21/#29/#32); the test shows
@@ -81,17 +81,17 @@
 //!
 //! ## BODIES compares, BODY-INPUTS has nothing to probe
 //!
-//! Conformance 0.12.0's `BODIES` invokes each deterministic `Source`'s `invoke`
+//! Conformance 0.12.1's `BODIES` invokes each deterministic `Source`'s `invoke`
 //! and `invoke_body` directly in the module space, so every walk hands it the
 //! very `Arc` the kernel was built from (`Suite::body_space`). Over a cacheable
 //! file space it compares the file and the absolute period, and leaves the
-//! current month (expires at local midnight) unprobed with its own reason;
+//! current week (expires at local midnight) unprobed with its own reason;
 //! [`conforms`] pins exactly that. `BODY-INPUTS` probes arguments declared
 //! `reads_body`, and no argument here is: the agenda reads its files through
 //! `inv.source`, not `content_body`. So no content store is wired.
 //!
 //! No opt-outs, no module namespace (the Turtle face uses `ical:` and three
-//! `ik:` terms `ikigai-vocab` defines), NAMES runs (`org-agenda` is kebab-case).
+//! `ik:` terms `ikigai-vocab` defines), NAMES runs (both agenda ids are kebab-case).
 //! No `Suite::own`: this is not a composing host, and the one endpoint beside
 //! the module is the test's own fixture, walked on purpose so it conforms too.
 
@@ -107,8 +107,10 @@ use ikigai_core::{
     Time, UriTemplate, Verb,
 };
 
-/// The agenda's description id, at both of its patterns.
+/// The default-week agenda's description id.
 const AGENDA: &str = "org-agenda";
+/// The explicit-period agenda's description id.
+const AGENDA_PERIOD: &str = "org-agenda-period";
 /// The fixture file space's description id.
 const ORGFILE: &str = "orgfile";
 
@@ -316,7 +318,7 @@ fn suite(agenda: &Agenda) -> Suite {
     Suite::new()
         .body_space(agenda.root.clone())
         .fixture(Fixture::new(ORGFILE, Verb::Source).binding("path", FILE))
-        .fixture(Fixture::new(AGENDA, Verb::Source).binding("period", ABSOLUTE))
+        .fixture(Fixture::new(AGENDA_PERIOD, Verb::Source).binding("period", ABSOLUTE))
         .host_named_space("ikigai_org::space(files)", agenda.org.clone())
 }
 
@@ -326,8 +328,8 @@ fn suite(agenda: &Agenda) -> Suite {
 /// `space()` without a line here would be held to a weaker standard.
 fn assert_shape(report: &Report) {
     assert_eq!(
-        report.endpoints, 2,
-        "org-agenda + the fixture file: {report}"
+        report.endpoints, 3,
+        "two agenda doors + the fixture file: {report}"
     );
     assert_eq!(
         report.actions, 3,
@@ -354,6 +356,7 @@ fn conforms() {
     let agenda = Agenda::cacheable();
     let report = suite(&agenda)
         .cacheable(AGENDA)
+        .cacheable(AGENDA_PERIOD)
         .cacheable(ORGFILE)
         .run_blocking(&agenda.kernel);
     // Printed even when clean (`--nocapture`): the report is the record.
@@ -361,7 +364,7 @@ fn conforms() {
     assert!(report.is_clean(), "{report}");
     assert_shape(&report);
     // BODIES compares every deterministic answer over a cacheable file space.
-    // The one it leaves is `urn:org:agenda`'s current-month answer, which
+    // The one it leaves is `urn:org:agenda`'s current-week answer, which
     // expires at local midnight (`Expiry::At`): two independent calls cannot
     // prove agreement across that boundary, so the suite reports it unprobed
     // with its own reason. Pinned exactly, so the absolute period and the file
@@ -389,15 +392,13 @@ fn conforms() {
     // working, and this number is what changes if it stops. Conformance 0.9.0's
     // RECOMPUTE cuts the declared threads and re-resolves 24 times per action
     // (it recomputes on purpose), which adds 52 reads: 2 + 52 = 54.
-    // Conformance 0.12.0's BODIES adds 4: it invokes the file endpoint's
-    // `invoke` and `invoke_body` directly (2, past the cache), and its bounded
-    // kernel requests run under fresh `urn:cap:stream:memory:{len - 1}`
-    // capabilities, a different cache key, so the file's (382) and one agenda
-    // face's (545) reach the file (2). 54 + 4 = 58.
+    // Conformance 0.12.1's BODIES keeps the baseline authority for bounded
+    // requests. It adds the file's two direct calls and one file re-read after
+    // cutting the cached file before the bounded probe: 54 + 3 = 57.
     assert_eq!(
         agenda.file.reads(),
-        58,
-        "2 reads from the cache and ENFORCED probes (one under root, one under no grants), 52 from RECOMPUTE's deliberate cuts, and 4 from BODIES' direct calls and bounded requests"
+        57,
+        "2 reads from the cache and ENFORCED probes (one under root, one under no grants), 52 from RECOMPUTE's deliberate cuts, and 3 from BODIES' direct calls and bounded requests"
     );
 }
 
@@ -430,13 +431,14 @@ fn a_live_file_space_leaves_the_agenda_live() {
     // naming the declaration, and nothing else.
     let report = suite(&agenda)
         .cacheable(AGENDA)
+        .cacheable(AGENDA_PERIOD)
         .run_blocking(&agenda.kernel);
     eprintln!("[live file space, org-agenda declared cacheable]\n{report}");
     assert_eq!(
         findings(&report),
         [
             (AGENDA, Some(Verb::Source), Check::Cacheable),
-            (AGENDA, Some(Verb::Source), Check::Cacheable),
+            (AGENDA_PERIOD, Some(Verb::Source), Check::Cacheable),
         ],
         "{report}"
     );
@@ -733,14 +735,13 @@ fn the_turtle_face_is_the_calendar_event_graph() {
 }
 
 /// The capability gate is the host's file space's, reached through
-/// `inv.source`. `org-agenda` declares no scope of its own (it cannot name what
+/// `inv.source`. Neither agenda door declares a scope of its own (it cannot name what
 /// the host mounts), so under no grants against a gated file space the refusal
 /// is the FILE's — and it reaches the caller as the typed `Denied` the kernel
 /// raised, never flattened into an endpoint error. The suite cannot see a gate
 /// in a sub-resolution; walked over a gated fixture it reports the over-offer,
 /// which is the true shape of the composed host and is recorded here rather
-/// than declared away (this crate cannot know the scope to declare). `BODIES`
-/// meets the same gate: its bounded request carries no file scope.
+/// than declared away (this crate cannot know the scope to declare).
 #[test]
 fn the_file_gate_is_the_hosts_and_passes_through_typed() {
     let agenda = Agenda::new(OrgFile::new(true, Some(FS_READ)), Some(noon()));
@@ -770,34 +771,19 @@ fn the_file_gate_is_the_hosts_and_passes_through_typed() {
         findings(&report),
         [
             (AGENDA, Some(Verb::Source), Check::Enforced),
-            (AGENDA, Some(Verb::Source), Check::Enforced),
-            (AGENDA, Some(Verb::Source), Check::Bodies),
+            (AGENDA_PERIOD, Some(Verb::Source), Check::Enforced),
         ],
-        "the agenda over-offers by exactly the file's scope, at both patterns, and BODIES meets the same gate: {report}"
+        "the agenda over-offers by exactly the file's scope, at both patterns, and BODIES retains root authority: {report}"
     );
-    let (enforced, bodies): (Vec<_>, Vec<_>) = report
-        .findings
-        .iter()
-        .partition(|f| f.check == Check::Enforced);
     assert!(
-        enforced
+        report
+            .findings
             .iter()
             .all(|f| f.detail.contains("declares no capability") && f.detail.contains(FS_READ)),
         "{report}"
     );
-    // The same over-offer, seen by BODIES (conformance 0.12.0): its bounded
-    // request carries the agenda's declared requirements (none) plus the memory
-    // grant, so the file space refuses it with its own scope before any budget
-    // is reached. The agenda's body contract is not what failed: over an
-    // ungated file space ([`conforms`]) BODIES is clean at both patterns.
-    assert!(
-        bodies
-            .iter()
-            .all(|f| f.detail.contains("expected OverBudget")
-                && f.detail.contains("denied")
-                && f.detail.contains(FS_READ)),
-        "{report}"
-    );
+    // Since conformance 0.12.1, bounded BODIES probes retain the baseline's
+    // root authority, so they reach the budget without an unrelated file denial.
 }
 
 /// `Fixture::new(id, …)` is looked up by description id; an id that matches no
@@ -808,7 +794,7 @@ fn the_fixture_ids_are_the_description_ids() {
     let agenda = Agenda::cacheable();
     for (iri, id) in [
         (AGENDA_IRI, AGENDA),
-        (ABSOLUTE_IRI, AGENDA),
+        (ABSOLUTE_IRI, AGENDA_PERIOD),
         (FILE_IRI, ORGFILE),
     ] {
         let description = agenda
@@ -847,4 +833,26 @@ fn required_has_nothing_to_drop() {
             );
         }
     }
+}
+
+/// Each agenda door must be independently selectable in an arrangement.
+#[test]
+fn agenda_doors_have_distinct_stable_ids() {
+    let agenda = Agenda::cacheable();
+    let mut ids = BTreeSet::new();
+    for (iri, expected) in [
+        (AGENDA_IRI, "org-agenda"),
+        (ABSOLUTE_IRI, "org-agenda-period"),
+        (TODAY_IRI, "org-agenda-period"),
+    ] {
+        let description = agenda.kernel.describe(&Iri::parse(iri).unwrap()).unwrap();
+        assert_eq!(description.id, expected, "{iri}");
+        description.validate().expect("an IRI-safe endpoint id");
+        ids.insert(description.id);
+    }
+    assert_eq!(
+        ids.len(),
+        2,
+        "the two doors bound in one kernel have distinct ids"
+    );
 }
