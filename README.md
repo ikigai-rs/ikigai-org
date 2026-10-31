@@ -65,3 +65,7 @@ holds it to claiming nothing. `REQUIRED` (0.8.0) runs and has nothing to
 drop: every input is a binding, defaulted, or optional, and a test pins that.
 `BODIES` (0.12.1) compares `invoke` with `invoke_body` over the kernel's own
 root space; `BODY-INPUTS` has nothing to probe, since no argument reads a body.
+
+## Accessibility
+
+The agenda text this crate writes, the rules it follows, how it is tested and its known limitations are in [ACCESSIBILITY.md](ACCESSIBILITY.md). Report a barrier with an issue carrying the `accessibility` label.
