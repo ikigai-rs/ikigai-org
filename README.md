@@ -1,6 +1,6 @@
 # ikigai-org
 
-The org-mode agenda as ikigai ROC resources. `urn:org:agenda:{period}` (today ·
+The org-mode agenda and [TODO entries](#todo-entries) as ikigai ROC resources. `urn:org:agenda:{period}` (today ·
 tomorrow · week · month · year · month names · `YYYY-MM` · `YYYY-MM-DD` · an
 end-inclusive range `YYYY-MM-DD..YYYY-MM-DD`; bare = week) reads **date-fixed
 events** — headlines with active `<…>` timestamps, repeaters
@@ -65,7 +65,92 @@ holds it to claiming nothing. `REQUIRED` (0.8.0) runs and has nothing to
 drop: every input is a binding, defaulted, or optional, and a test pins that.
 `BODIES` (0.12.1) compares `invoke` with `invoke_body` over the kernel's own
 root space; `BODY-INPUTS` has nothing to probe, since no argument reads a body.
+`tests/todo.rs` walks the TODO doors over the real `ikigai-fs` endpoint, with no
+opt-outs, and pins the round trip, the conflicts and the capabilities by hand.
+
+## TODO entries
+
+`ikigai_org::todo_space(files)` serves the headlines with a TODO keyword, from files
+the host binds by name (`TodoFile::new("queue", "urn:orgfile:queue.org")`). The file
+is the only state: a state changed in Emacs is the next read's answer.
+
+| Pattern | Stable id | Verb | Requires | Answers |
+| --- | --- | --- | --- | --- |
+| `urn:org:todo` | `org-todo` | Source | `urn:cap:fs:read:*` | every entry |
+| `urn:org:todo:id:{id}` | `org-todo-id` | Source | `urn:cap:fs:read:*` | one entry, or `NotFound` |
+| `urn:org:todo:state:{state}` | `org-todo-state` | Source | `urn:cap:fs:read:*` | the entries in that state |
+| `urn:org:todo:tag:{tag}` | `org-todo-tag` | Source | `urn:cap:fs:read:*` | the entries with that tag |
+| `urn:org:todo:file:{name}` | `org-todo-file` | Sink | `urn:cap:fs:read:*`, `urn:cap:fs:write:*` | appends one entry |
+
+The Sink needs read as well as write because it reads the file, as the caller, to
+find the version it writes against. The file space's own path rules still judge the
+grant.
+
+**Reading.** The keywords are the file's own `#+TODO:` line (`TODO NEXT | DONE`,
+fast-access marks ignored), defaulting to `TODO | DONE`. As in Emacs, a headline
+starts at column zero, and an entry's metadata is the planning lines and drawers
+directly under it, so a `:ID:` in the body is text. An entry with no `:ID:` gets a
+stable FNV-1a id of its file and title, which survives a state change but not a
+retitling. Tags are the headline's own: no inheritance, no `#+FILETAGS:`. A child
+headline is its own entry, not part of its parent's body. Every read is cacheable
+under the files' threads, and live over a live file space.
+
+The list is one line per entry, and an id read is one labeled line per field with the
+body last and verbatim:
+
+```text
+org todo — all entries
+
+  NEXT  Read the draft  :ID: draft-1  tags: review, hub
+
+org todo — draft-1
+
+state: NEXT
+title: Read the draft
+tags: review, hub
+file: queue
+closed: (none)
+logbook: (none)
+body:
+See [[https://example.com/draft][the draft]].
+```
+
+`as=text/turtle` gives `ical:Vtodo` nodes at `urn:org:todo:id:{id}`, no blank nodes:
+`ical:uid`, `ical:summary`, `ical:status`, `ical:categories`, `ical:completed`,
+`ical:description` and `ik:calendar`. The vocabulary has two gaps: nothing holds an
+org keyword, so `ical:status` carries `NEXT` where iCalendar expects its own closed
+list (nothing says which keywords are done), and nothing holds a logbook note, so
+notes are on the text face only.
+
+**Appending.** A Sink at `urn:org:todo:file:{name}` takes `id` and `title`, and
+optionally `state` (default: the file's first open keyword), `tags`, `under` (a
+top-level heading to file it beneath as a child) and `content` (the body). The new
+text is the old bytes with one entry spliced in, nothing else, at the end of the file
+or of that subtree. It refuses:
+
+- `Conflict`: the file changed since the read, the `id` already exists in any bound
+  file, or `under` names no heading or several. Nothing was written. Read again, and
+  decide again.
+- `InvalidArgument`: a `state` not among the file's keywords, a title ending in what
+  org reads as tags, or a body that would change how the file reads (a headline at
+  column zero, a live `#+TODO:` line).
+- `Unsupported`: the file space does not declare `if-match`. Nothing was written.
+
+**This needs `ikigai-fs` 0.4.1**, which is prepared but not published. Earlier versions
+ignore `if-match`, which would make the write a blind overwrite, so the Sink asks
+`urn:kernel:validate` first and refuses them.
+
+**What it does not promise.** The comparison and the rename are one operation only to
+writers through `ikigai-fs`. Emacs saving or Dropbox syncing takes no lock, so a save
+landing in the instant between the comparison and the rename is lost. Any other edit
+since the read is a `Conflict`, and the entry is what is refused, never the edit. The
+window cannot be closed from this crate. Unsaved text in an Emacs buffer is Emacs's to
+keep: it warns on saving over a file changed on disk.
+
+On a cacheable mount, a read cached across an edit gives a stale version, so the Sink
+answers `Conflict` until the host's watcher cuts the file's thread. That is safe, but
+such a mount needs the watcher for appends to go through at all.
 
 ## Accessibility
 
-The agenda text this crate writes, the rules it follows, how it is tested and its known limitations are in [ACCESSIBILITY.md](ACCESSIBILITY.md). Report a barrier with an issue carrying the `accessibility` label.
+The agenda and TODO text this crate writes, the rules it follows, how it is tested and its known limitations are in [ACCESSIBILITY.md](ACCESSIBILITY.md). Report a barrier with an issue carrying the `accessibility` label.
