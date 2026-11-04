@@ -136,7 +136,7 @@ or of that subtree. It refuses:
   column zero, a live `#+TODO:` line).
 - `Unsupported`: the file space does not declare `if-match`. Nothing was written.
 
-**This needs `ikigai-fs` 0.4.1**, which is prepared but not published. Earlier versions
+**This needs `ikigai-fs` 0.4.1 or later.** Earlier versions
 ignore `if-match`, which would make the write a blind overwrite, so the Sink asks
 `urn:kernel:validate` first and refuses them.
 
