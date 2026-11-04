@@ -1,4 +1,4 @@
-//! `ikigai-org` — the org-mode agenda as ROC resources.
+//! `ikigai-org` — the org-mode agenda and TODO entries as ROC resources.
 //!
 //! `urn:org:agenda:{period}` reads **date-fixed events** (headlines with active
 //! `<…>` timestamps, repeaters expanded into the window) from org files and
@@ -11,6 +11,9 @@
 //! hands this space their IRIs. That keeps this crate free of filesystem
 //! access — capability-gated, wasm-clean, and golden-thread-ready when the
 //! host's file space is cacheable.
+//!
+//! TODO entries are resources too: see [`mod@todo`], which serves them by id, state and
+//! tag, and appends new ones with a conditional write.
 //!
 //! ## Caching: the files' threads, plus the clock's half
 //! An absolute period (`YYYY-MM`, `YYYY-MM-DD`, a range) is a function of the
@@ -49,6 +52,9 @@ use ikigai_core::{
     Representation, Result, Time, UriTemplate, Verb,
 };
 use std::collections::HashSet;
+
+pub mod todo;
+pub use todo::{todo_entries, todo_space, TodoEntry, TodoFile};
 
 /// One agenda event, normalized. The same shape the calendar side speaks.
 #[derive(Clone, Debug, PartialEq, Eq)]
