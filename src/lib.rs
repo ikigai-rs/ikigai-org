@@ -30,8 +30,8 @@
 //! `tests/conformance.rs` pins all of it: the walk, the cut, the deadline.
 //!
 //! ## What is parsed (v1)
-//! Headlines (`* Title`) whose section carries an active timestamp:
-//! `<YYYY-MM-DD [Day] [HH:MM[-HH:MM]] [+N{d,w,m,y}]>`. Inactive `[…]`
+//! Headlines (`* Title`) with an active timestamp in the headline or section:
+//! `<YYYY-MM-DD [Day] [HH:MM[-HH:MM]] [+N{d,w,m,y}]>` (also `++`/`.+`). Inactive `[…]`
 //! timestamps are ignored. A `<start>--<end>` pair is one spanning event.
 //! Untimed stamps are all-day; a timed stamp without
 //! an end defaults to one hour. Repeaters (`+1w`, `+1y`, …) are expanded into
@@ -283,10 +283,14 @@ fn parse_stamp(inner: &str) -> Option<Stamp> {
             }
             return None; // the first token must be the date
         }
-        if let Some(rest) = part.strip_prefix('+') {
+        if let Some(rest) = part
+            .strip_prefix(".+")
+            .or_else(|| part.strip_prefix("++"))
+            .or_else(|| part.strip_prefix('+'))
+        {
             // A repeater like +1w / +2d / +1y (org's ++/.+ cadences are treated
-            // the same for expansion purposes).
-            let rest = rest.trim_start_matches('+').trim_start_matches('.');
+            // the same for expansion purposes). Their differences concern how
+            // Org shifts the stored date on completion, not this read-only view.
             if let (Some(unit), Ok(n)) = (
                 rest.chars().last().filter(|c| "dwmy".contains(*c)),
                 rest[..rest.len().saturating_sub(1)].parse::<u32>(),
@@ -407,8 +411,7 @@ enum Head<'a> {
 /// that it happens; org records that it's complete. CANCELLED isn't happening:
 /// no event, and the derive removes any existing one.
 fn headline(line: &str) -> Head<'_> {
-    let trimmed = line.trim_start();
-    let Some(rest) = trimmed.strip_prefix('*') else {
+    let Some(rest) = line.strip_prefix('*') else {
         return Head::Not;
     };
     let Some(title) = rest.trim_start_matches('*').strip_prefix(' ') else {
@@ -628,7 +631,9 @@ fn entry_events(
 ) {
     let props = collect_props(lines);
     let mut seen: HashSet<String> = HashSet::new();
-    for stamp in entry_stamps(lines) {
+    // Headline timestamps are events too; keep them separate from the body so
+    // they do not end the property preamble before its drawer is collected.
+    for stamp in stamps_in(title).into_iter().chain(entry_stamps(lines)) {
         let base_uid = props
             .org_id
             .clone()
@@ -640,8 +645,7 @@ fn entry_events(
             // window still spans into it.
             let span = stamp.end_date.map(|end| end - stamp.date);
             let mut date = stamp.date;
-            let mut hops = 0u32;
-            while date < win_end && hops < 1000 {
+            while date < win_end {
                 let occ_end = span.map(|days| date + days);
                 if date >= win_start || occ_end.is_some_and(|end| end >= win_start) {
                     let (start, end, all_day) = match (stamp.time, occ_end) {
@@ -706,7 +710,6 @@ fn entry_events(
                 }
                 let Some(repeat) = stamp.repeat else { break };
                 date = step(date, repeat);
-                hops += 1;
             }
         }
     }
@@ -1018,6 +1021,58 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
             NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
         )
+    }
+
+    #[test]
+    fn audit_headline_timestamps_keep_the_entries_properties() {
+        let org = "* Réunion <2026-07-14 Tue 10:00-11:00>\n:PROPERTIES:\n:ID: meeting\n:LOCATION: Library\n:END:\n";
+        let (start, end) = july();
+        let events = agenda_events(org, "synthetic.org", start, end);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].uid, "meeting");
+        assert_eq!(events[0].location.as_deref(), Some("Library"));
+        assert!(events[0].start.starts_with("2026-07-14T10:00"));
+        assert!(events[0].end.starts_with("2026-07-14T11:00"));
+        assert_eq!(events[0].title, "Réunion <2026-07-14 Tue 10:00-11:00>");
+    }
+
+    #[test]
+    fn audit_indented_stars_are_body_text() {
+        let org = "* Parent\n:PROPERTIES:\n:ID: parent\n:END:\n  * list item\n    <2026-07-14 Tue>";
+        let (start, end) = july();
+        let events = agenda_events(org, "synthetic.org", start, end);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].title, "Parent");
+        assert_eq!(events[0].uid, "parent");
+    }
+
+    #[test]
+    fn audit_old_repeaters_still_reach_the_window() {
+        let org = "* Daily\n<2020-01-01 Wed +1d>\n* Weekly\n<2000-01-05 Wed +1w>\n";
+        let (start, end) = july();
+        let events = agenda_events(org, "synthetic.org", start, end);
+        assert_eq!(events.iter().filter(|e| e.title == "Daily").count(), 31);
+        assert_eq!(events.iter().filter(|e| e.title == "Weekly").count(), 5);
+    }
+
+    #[test]
+    fn audit_all_repeater_markers_expand_the_stored_timestamp() {
+        let (start, end) = july();
+        for marker in ["+", "++", ".+"] {
+            let org = format!("* Repeating\n<2026-07-01 Wed {marker}2d -3d>");
+            let events = agenda_events(&org, "synthetic.org", start, end);
+            assert_eq!(events.len(), 16, "{marker}");
+            assert!(events[1].start.starts_with("2026-07-03T"));
+            assert!(events[15].start.starts_with("2026-07-31T"));
+        }
+    }
+
+    #[test]
+    fn audit_a_window_can_contain_more_than_one_thousand_occurrences() {
+        let start = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let events = agenda_events("* Daily\n<2020-01-01 Wed +1d>", "synthetic.org", start, end);
+        assert_eq!(events.len() as i64, (end - start).num_days());
     }
 
     #[test]
