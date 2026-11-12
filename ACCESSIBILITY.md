@@ -10,7 +10,7 @@ how to report a barrier. It is not a conformance claim. Adapted from the
 | Status | Evaluation in progress. No conformance claim. |
 | Owner | the maintainers of this repository |
 | Report a barrier | [a GitHub issue](https://github.com/ikigai-rs/ikigai-org/issues/new?labels=accessibility) with the `accessibility` label; anything security-sensitive through [private vulnerability reporting](https://github.com/ikigai-rs/ikigai-org/security/advisories/new) |
-| Last reviewed | 2026-11-04 |
+| Last reviewed | 2026-11-12 |
 
 ## What it emits that people read
 
@@ -52,26 +52,44 @@ changed during an append; and any page or terminal a host puts this text in.
 - A TODO refusal that left the file alone says `nothing was written`, and a `state` not in the
   file lists the file's keywords.
 
-These are followed by reading the source; the tests below pin some of them.
+These rules guide changes; the results below distinguish tested behavior from gaps.
 
 ## How it is tested
 
-- `src/lib.rs` unit tests: `a_date_range_is_one_spanning_event` pins the inclusive range line,
-  and `location_and_url_drawers_are_parsed_and_reset_per_headline` pins a detail line with its
-  `[file]` and `@ location`.
-- `tests/conformance.rs` reads the text face and checks event titles are present; it does not
-  check the format.
-- `src/todo.rs` unit test `the_text_faces_say_everything_in_words` and `tests/todo.rs`'s
-  `the_text_faces_and_partitions` pin the list and entry text, `(no entries)` and `(none)`
-  exactly; `required_inputs_are_refused`, `an_id_already_present_is_a_conflict_wherever_it_is` and
-  `a_file_space_with_no_conditional_write_is_refused_before_anything_is_written` pin the refusals'
-  words.
-- **No automated accessibility checker, browser or assistive technology has been used on this
-  output.**
+Every named check has a result: Pass, Fail or Blocked, with evidence. A Pass covers only
+that check, not overall accessibility. On 2026-11-12, `cargo test --all-targets` ran on main
+at `d7113e6e82d62bac4415f5f706896c111d9ce8bd` (the code merged in
+[PR #25](https://github.com/ikigai-rs/ikigai-org/pull/25)): 48 unit tests, 11 agenda integration
+tests and 15 TODO integration tests passed. Tool versions were Cargo 1.99.0
+(`5f94df478`, 2026-08-27) and rustc 1.99.0 (`b940084d7`, 2026-09-28).
+All test rows below refer to that command, toolchain and date. CI repeats the Rust tests
+through `.github/workflows/ci.yml`; it does not perform a browser or assistive technology
+evaluation. No historical browser or assistive technology run is recorded here.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Agenda inclusive all-day date range | Pass | `src/lib.rs`: `a_date_range_is_one_spanning_event` checks the `2026-07-14..2026-07-17  all-day` text. Does not cover every agenda format. |
+| Agenda file and location text | Pass | `src/lib.rs`: `location_and_url_drawers_are_parsed_and_reset_per_headline` checks the title, `[calendar.org]` and `@ Microsoft Teams Meeting` substring; does not test how punctuation is spoken. |
+| Agenda titles through the host | Pass | `tests/conformance.rs` checks titles in the text face; does not check the complete text format. |
+| TODO list, entry labels and empty values | Pass | `src/todo.rs`: `the_text_faces_say_everything_in_words` checks the exact empty list, list line and entry text, including `(none)`; `tests/todo.rs`: `the_text_faces_and_partitions` checks lists, partitions and body preservation. Does not evaluate org markup with assistive technology. |
+| TODO input and file refusals | Pass | `tests/todo.rs`: `required_inputs_are_refused`, `an_id_already_present_is_a_conflict_wherever_it_is`, `an_id_two_entries_claim_is_refused_by_name`, `a_custom_todo_line_is_the_files_vocabulary` and `a_file_space_with_no_conditional_write_is_refused_before_anything_is_written` check named inputs, diagnostic substrings and selected `nothing was written` messages. Not every refusal is checked word for word. |
+| Agenda empty-period and refusal wording | Blocked | No dedicated wording assertions for `(no events)` or agenda refusals were found in the current tests; no manual output evaluation was performed for this update. |
+| Sink success wording | Blocked | No dedicated assertion of the full `appended … to …` response or manual accessibility evaluation was performed for this update. Append behavior tests do not establish the accessibility of that message. |
+| Turtle event and entry graphs | Pass | `tests/conformance.rs`: `the_turtle_face_is_the_calendar_event_graph`; `tests/todo.rs`: `the_turtle_face_is_skolemized_on_defined_terms`. Check graph structure and vocabulary, not accessibility in a consuming tool. |
+| Meaning independent of layout and punctuation | Fail | Source review on 2026-11-12 of `format_detail` in `src/lib.rs` and `format_list` in `src/todo.rs`: file and location use punctuation, while list state and title rely on order and spacing. See known limitations; no assistive technology evaluation. |
+| Timed events spanning days state their end date | Fail | Source review on 2026-11-12 of `format_detail` in `src/lib.rs`: timed output uses the start date and start/end `HH:MM` only, omitting the end date. The parser's overnight test does not test this text. |
+| Automated accessibility checker | Blocked | No checker has been run on this output; no browser checker is configured for this text-only crate. Rust tests do not substitute for one. |
+| Browser rendering and manual keyboard | Blocked | No host page or terminal session was evaluated with a browser or a person's keyboard for this update. The crate supplies text, and host interaction remains untested. |
+| Screen reader | Blocked | No screen reader session was available or used on this output for this update. |
+| Screen magnifier | Blocked | No screen magnifier session was available or used on this output for this update. |
+| Speech input | Blocked | No speech-input session was available or used on this output for this update. |
+| Switch access | Blocked | No switch-access session was available or used on this output for this update. |
+| Braille display | Blocked | No braille display was available or used on this output for this update. |
 
 ## Known limitations
 
-Found by reading the source on 2026-10-31:
+Found by source review on 2026-10-31 and rechecked on 2026-11-12; these are not
+assistive technology findings:
 
 - A timed event that ends on a later day (an overnight block, a class running past midnight) is
   shown with its start date and `HH:MM-HH:MM` only, so `22:00-06:00` reads as one day.
@@ -84,8 +102,8 @@ Found by reading the source on 2026-10-31:
 - A TODO list line tells its fields apart by two spaces and the `:ID:` and `tags:` labels; the
   state and the title have no label there, only their order. The `:ID:` is read aloud with its
   colons, and it keeps org's spelling because that is what a reader searches the file for.
-- A `closed:` time is org's text as written, with no time zone. An entry's body is org markup as
-  written, so a link reads as `[[target][text]]`.
+- A `closed:` time is normalized to an ISO 8601 date or local date-time, with no time zone.
+  An entry's body is org markup as written, so a link reads as `[[target][text]]`.
 - A TODO state is the file's own keyword. Whether `WAIT` is open or finished is not said on any
   face; only the `#+TODO:` line says so.
 - All text is English, with no way to choose another language.
@@ -94,7 +112,10 @@ Found by reading the source on 2026-10-31:
 
 Read this file before changing any output listed above: the agenda or TODO text or the refusals. Keep
 meaning in words, never in color or position alone. Say in the pull request what was tested,
-with what, and what was not.
+with what, and what was not. Give every check a row in a `Check | Result | Evidence` table,
+using Pass, Fail or Blocked, with the test or command, tool and version, or why it could not
+run. Keep unrun checks as Blocked, including each assistive technology nobody used. A
+historical run that CI does not repeat is Blocked with its date, not Pass.
 
 ## Reporting a barrier
 
@@ -111,3 +132,4 @@ through [private vulnerability reporting](https://github.com/ikigai-rs/ikigai-or
 |---|---|
 | 2026-10-31 | First version. |
 | 2026-11-04 | Added the TODO faces, the Sink's answer and its refusals. |
+| 2026-11-12 | Recorded Pass, Fail and Blocked results, current main test evidence and unrun assistive technology checks. |
