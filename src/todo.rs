@@ -237,13 +237,12 @@ struct Meta {
 fn metadata(lines: &[&str]) -> Meta {
     let mut meta = Meta::default();
     let mut at = 0;
+    if let Some(Some(closed)) = lines.first().map(|line| planning(line.trim())) {
+        meta.closed = closed;
+        at += 1;
+    }
     while let Some(line) = lines.get(at) {
         let trimmed = line.trim();
-        if let Some(found) = planning(trimmed) {
-            meta.closed = meta.closed.or(found);
-            at += 1;
-            continue;
-        }
         let Some((name, "")) = property(trimmed) else {
             break;
         };
@@ -1171,6 +1170,16 @@ See [[https://example.com][the draft]].
   * an indented star is a list item
 * NOT-A-KEYWORD Stays a heading
 ";
+
+    #[test]
+    fn planning_after_a_drawer_is_body_text() {
+        let entries = todo_entries(
+            "* TODO Task\n:PROPERTIES:\n:ID: task\n:END:\nCLOSED: [2026-11-04 Wed]\n",
+            "q",
+        );
+        assert_eq!(entries[0].closed, None);
+        assert_eq!(entries[0].body, "CLOSED: [2026-11-04 Wed]");
+    }
 
     #[test]
     fn keywords_come_from_the_file_with_marks_dropped() {
