@@ -526,8 +526,26 @@ fn collect_props(lines: &[&str]) -> EntryProps {
 fn entry_stamps(lines: &[&str]) -> Vec<Stamp> {
     let mut stamps = Vec::new();
     let mut in_drawer = false;
-    for line in lines {
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        at += 1;
         let trimmed = line.trim();
+        let upper = trimmed.to_ascii_uppercase();
+        if !in_drawer
+            && (upper == "#+BEGIN_SRC"
+                || upper.starts_with("#+BEGIN_SRC ")
+                || upper.starts_with("#+BEGIN_SRC\t"))
+            && lines[at..]
+                .iter()
+                .any(|line| line.trim().eq_ignore_ascii_case("#+END_SRC"))
+        {
+            while at < lines.len() && !lines[at].trim().eq_ignore_ascii_case("#+END_SRC") {
+                at += 1;
+            }
+            at += 1;
+            continue;
+        }
         if trimmed.eq_ignore_ascii_case(":PROPERTIES:") {
             in_drawer = true;
             continue;
@@ -1021,6 +1039,15 @@ mod tests {
             NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
             NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
         )
+    }
+
+    #[test]
+    fn timestamps_in_source_blocks_are_not_events() {
+        let (start, end) = july();
+        let org = "* Example\n#+begin_src org\n<2026-07-14 Tue>\n#+end_src\n<2026-07-15 Wed>\n";
+        let events = agenda_events(org, "example.org", start, end);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].start.starts_with("2026-07-15"));
     }
 
     #[test]
